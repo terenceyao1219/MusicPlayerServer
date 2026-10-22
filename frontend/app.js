@@ -207,7 +207,7 @@ async function advance(direction,trigger='manual'){
   mediaReady=false;audio.pause();playback={...playback,track_id:target,position:0};storePlayback();await loadAudio(true);
  }finally{switching=false;}
 }
-$('#play').onclick=run(async()=>{if(restoring)return;if(transport==='hls'&&hlsEngine&&hlsEngine.loading){toast('HLS 正在定位所選歌曲，請稍候。');return;}if(!playback.track_id){if(!visibleTracks().length)throw Error('目前沒有可播放的音樂');await choose(visibleTracks()[0].id);}else if(transport==='hls'&&hlsEngine&&(!hlsEngine.session||hlsEngine.failed)){if(!switching){switching=true;try{await loadAudio(true);}finally{switching=false;}}}else if(audio.paused)await audio.play();else audio.pause();});
+$('#play').onclick=run(async()=>{if(restoring)return;if(transport==='hls'&&hlsEngine&&hlsEngine.loading){toast('HLS 正在定位所選歌曲，請稍候。');return;}if(!playback.track_id){if(!visibleTracks().length)throw Error('目前沒有可播放的音樂');await choose(visibleTracks()[0].id);}else if(transport==='hls'&&hlsEngine&&(!hlsEngine.session||hlsEngine.failed)){if(!switching){switching=true;try{const resume=await hlsEngine.resumePoint();if(resume)updateHLS(resume);await loadAudio(true);}finally{switching=false;}}}else if(audio.paused)await audio.play();else audio.pause();});
 $('#next').onclick=run(()=>advance(1));$('#previous').onclick=run(()=>advance(-1));
 $('#mode').onchange=run(async event=>{if(switching||restoring){event.target.value=playback.mode;return;}await persist();playback.mode=event.target.value;randomHistory=[];randomFuture=[];storePlayback();if(transport==='hls'){const playing=!audio.paused;switching=true;try{audio.pause();await loadAudio(playing);}finally{switching=false;}}});
 $('#transport').onchange=run(async event=>{
@@ -223,8 +223,16 @@ const clock=seconds=>Number.isFinite(seconds)?`${Math.floor(seconds/60)}:${Strin
 audio.ontimeupdate=()=>{const current=transport==='hls'&&hlsEngine?hlsEngine.current():null;if(current)updateHLS(current);const position=current?current.position:transport==='hls'?playback.position:audio.currentTime,duration=current?current.duration:transport==='hls'?0:audio.duration;$('#elapsed').textContent=clock(position);$('#duration').textContent=clock(duration);$('#seek').max=Number.isFinite(duration)?duration:0;$('#seek').value=position;if(Date.now()-saveAt>5000){saveAt=Date.now();persist().catch(error=>{audio.pause();toast(error.message);});}};
 audio.onplay=()=>{$('#play').classList.toggle('is-playing',true);$('#play').setAttribute('aria-label','暫停');};audio.onpause=()=>{$('#play').classList.toggle('is-playing',false);$('#play').setAttribute('aria-label','播放');persist().catch(error=>toast(error.message));};audio.onended=run(()=>advance(1,'ended'));audio.onerror=()=>{if(transport==='hls'&&hlsEngine)hlsEngine.failed=true;if(audio.hasAttribute('src'))toast('無法播放：請確認檔案格式、資料夾權限或重新登入。');};
 window.addEventListener('pagehide',()=>{persist();});
-window.addEventListener('pageshow',()=>{if(transport==='hls'&&hlsEngine)hlsEngine.refresh().catch(error=>toast(error.message));});
-if(document.addEventListener)document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&transport==='hls'&&hlsEngine)hlsEngine.refresh().then(()=>persist()).catch(error=>toast(error.message));});
+async function refreshHLSForeground(){
+ if(transport!=='hls'||!hlsEngine)return;
+ await hlsEngine.refresh();
+ if(audio.error)hlsEngine.failed=true;
+ const current=hlsEngine.current(true);if(current)updateHLS(current);
+ await persist();
+ if(hlsEngine.failed)toast('HLS 已中斷，按播放可從目前歌曲進度重新連線。');
+}
+window.addEventListener('pageshow',()=>{refreshHLSForeground().catch(error=>toast(error.message));});
+if(document.addEventListener)document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')refreshHLSForeground().catch(error=>toast(error.message));});
 // Other tabs may save their own resume point; never apply storage events to live playback.
 if(token)enter().catch(error=>{signOut();toast(error.message);});
 

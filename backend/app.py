@@ -160,6 +160,8 @@ def create_app(config_path=None, overrides=None):
         response.headers["Content-Security-Policy"] = "default-src 'self'; style-src 'self'; script-src 'self'; media-src 'self' blob:; worker-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'"
         if request.path.startswith(PREFIX):
             response.headers["Cache-Control"] = "no-store"
+        if request.endpoint in {"hls.playlist", "hls.segment"} and response.status_code >= 400:
+            app.logger.warning('HLS media request failed: endpoint=%s status=%s', request.endpoint, response.status_code)
         return response
 
     @app.errorhandler(HTTPException)

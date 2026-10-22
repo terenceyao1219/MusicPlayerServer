@@ -1639,6 +1639,9 @@ N/A（不需 Body）。
 - 歌曲／進度仍以 `mplayer:playback:v1:<user_id>` 保存。下次先用 `/playback/restore` 驗證，使用者按播放才建立新 HLS 工作階段；不保存舊 HLS URL 作為永久續播網址。
 - 單曲循環自然播完會重播同曲；手動上下首仍走原有 resolve 規則。其他模式的手動上下首優先使用已準備的 entries；隨機不保存跨工作階段歷史。
 - 狀態／清單／片段請求會更新閒置時間；預設 3600 秒回收，最多 32 個工作階段。程序重啟即失效；只支援單一 Gunicorn worker。
+- 補曲以已請求片段結尾為基準，至少準備三首，並以 `hls.ahead_seconds`（預設 300 秒，可設 0–1800）為後續時長目標，最多預備二十首。這是 Server 預備量，不等於手機已下載的緩衝量；短曲達二十首或轉碼來不及時可能未達目標。
+- 建立／查詢 HLS 工作階段回應新增 `diagnostics`：`building`（boolean，轉碼排程是否進行中）、`prepared_seconds`（number，已準備的總時長）、`requested_seconds`（number，已請求片段的最遠結尾）、`ahead_seconds`（number，兩者差值，不小於零）。單位皆為秒，請求位置不代表實際聆聽位置。
+- HLS 清單／片段回應 HTTP 4xx／5xx 時，Server warning log 記錄 endpoint 與狀態碼，不記錄 cookie 或工作階段網址。搭配轉碼錯誤日誌及 diagnostics 判斷中斷原因。
 - 快取重用依原檔路徑、大小與修改時間識別。cache_mb 預設 2048，僅清理未被工作階段使用的舊快取，不是硬性磁碟上限。
 - 音訊 Cookie 有效期仍為登入後 24 小時；HLS 不延長登入。iOS 背景 JS 可能暫停，所以曲名更新與本機最後保存位置可能延遲。
 

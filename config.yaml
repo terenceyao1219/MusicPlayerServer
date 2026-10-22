@@ -27,3 +27,4 @@ hls:
   cache_mb: 2048
   idle_seconds: 3600
   max_sessions: 32
+  ahead_seconds: 300

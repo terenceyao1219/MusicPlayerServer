@@ -5,6 +5,15 @@ class SonoraHLS {
   this.generation=0;this.session=null;this.player=null;this.timer=null;this.loading=false;
  }
  static supported(audio){return !!audio.canPlayType('application/vnd.apple.mpegurl') || !!(window.Hls&&Hls.isSupported());}
+ static useNative(audio){
+  if(!audio.canPlayType('application/vnd.apple.mpegurl'))return false;
+  const nav=window.navigator||{},ua=nav.userAgent||'';
+  const ios=/iPhone|iPad|iPod/.test(ua)||(nav.platform==='MacIntel'&&nav.maxTouchPoints>1);
+  const safari=/Safari\//.test(ua)&&/Apple/.test(nav.vendor||'')&&!/Chrome|Chromium|CriOS|Edg|OPR|FxiOS/.test(ua);
+  // Chromium can report native HLS support without exposing seekable ranges.
+  // Keep Apple's background media pipeline; prefer MSE everywhere else.
+  return ios||safari||!(window.Hls&&Hls.isSupported());
+ }
  stop(){
   this.generation++;if(this.cancelStart){this.cancelStart();this.cancelStart=null;}clearTimeout(this.timer);this.timer=null;this.loading=false;
   if(this.player){this.player.destroy();this.player=null;}
@@ -14,7 +23,7 @@ class SonoraHLS {
  async start(state){
   this.stop();const generation=this.generation;
   if(!SonoraHLS.supported(this.audio))throw Error('此瀏覽器不支援 HLS，請切回原始串流。');
-  this.loading=true;this.warned=false;
+  this.loading=true;this.warned=false;this.started=false;this.pollWarned=false;
   try{
    let session=await this.request('/hls/sessions','POST',state);
    if(generation!==this.generation){this.request('/hls/sessions/'+session.id,'DELETE').catch(()=>{});return;}
@@ -32,10 +41,10 @@ class SonoraHLS {
    audio.preload='auto';
    this.waitForStart(session.position,generation);
    // Prefer Safari's native media pipeline for background playback.
-   if(audio.canPlayType('application/vnd.apple.mpegurl')){audio.src=session.playlist_url;audio.load();}
+   if(SonoraHLS.useNative(audio)){audio.src=session.playlist_url;audio.load();}
    else{
     this.player=new Hls({enableWorker:false,startPosition:session.position,maxBufferLength:30});
-    this.player.on(Hls.Events.ERROR,(_event,data)=>{if(data.fatal){this.loading=false;this.report('HLS 播放中斷，請按播放重試或切回原始串流。');this.failed=true;}});
+    this.player.on(Hls.Events.ERROR,(_event,data)=>{if(data.fatal){if(this.cancelStart){this.cancelStart();this.cancelStart=null;}this.loading=false;this.report('HLS 播放中斷，請按播放重試或切回原始串流。');this.failed=true;}});
     this.player.loadSource(session.playlist_url);this.player.attachMedia(audio);
    }
    this.failed=false;this.poll(generation);
@@ -48,7 +57,7 @@ class SonoraHLS {
   let timer=null,finished=false,playPending=false,attempts=0;
   const events=['loadeddata','canplay','progress','durationchange','seeked','playing'];
   const cleanup=()=>{clearTimeout(timer);for(const event of events)audio.removeEventListener(event,check);};
-  const finish=()=>{if(finished)return;finished=true;cleanup();this.cancelStart=null;this.loading=false;this.update(this.current());};
+  const finish=()=>{if(finished)return;finished=true;cleanup();this.cancelStart=null;this.loading=false;this.started=true;this.update(this.current());};
   const fail=()=>{finished=true;cleanup();this.cancelStart=null;audio.pause();this.loading=false;this.failed=true;this.report('HLS 尚未能定位到所選歌曲，請按播放重試或切回原始串流。');};
   const inRange=()=>{
    for(let i=0;i<audio.seekable.length;i++)if(audio.seekable.start(i)<=target+.05&&audio.seekable.end(i)>target)return true;
@@ -86,8 +95,8 @@ class SonoraHLS {
   for(const event of events)audio.addEventListener(event,check);
   timer=setTimeout(retry,200);
  }
- current(){
-  if(!this.session||this.loading||this.failed)return null;
+ current(allowFailed=false){
+  if(!this.session||this.loading||(this.failed&&!(allowFailed&&this.started)))return null;
   const time=this.audio.currentTime;
   const entry=this.session.entries.find(e=>time>=e.start-.001&&time<e.start+e.duration-.001);
   if(!entry)return null;
@@ -107,10 +116,19 @@ class SonoraHLS {
   this.session=info;this.update(this.current());
   if(info.error&&!this.warned){this.warned=true;this.report(info.error);}
  }
+ async resumePoint(){
+  // Refresh the timeline after background playback before rebuilding a failed stream.
+  try{await this.refresh();}catch{}
+  return this.current(true);
+ }
  poll(generation){
   this.timer=setTimeout(async()=>{
    if(generation!==this.generation)return;
-   try{await this.refresh();}catch(error){if(generation===this.generation){this.failed=true;this.report(error.message);return;}}
+   try{await this.refresh();this.pollWarned=false;}catch(error){
+    // Metadata polling is separate from native media playback. A temporary
+    // network failure must not permanently stop polling or position tracking.
+    if(generation===this.generation&&!this.pollWarned){this.pollWarned=true;this.report('HLS 狀態暫時無法更新，將自動重試。');}
+   }
    if(generation===this.generation)this.poll(generation);
   },4000);
  }

@@ -101,6 +101,7 @@ hls:
   cache: data/hls-cache
   cache_mb: 2048
   idle_seconds: 3600
+  ahead_seconds: 300
   max_sessions: 32
 ```
 

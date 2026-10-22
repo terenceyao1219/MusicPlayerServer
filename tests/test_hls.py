@@ -22,11 +22,11 @@ def audio_bytes(seconds=1):
 
 
 @pytest.fixture
-def hls(tmp_path):
+def hls(tmp_path, request):
     if not shutil.which('ffmpeg'):
         pytest.skip('real FFmpeg required')
     app = create_app(overrides={'storage': {'database': str(tmp_path / 'db.sqlite3'), 'music': str(tmp_path / 'music')},
-                                'hls': {'cache': str(tmp_path / 'cache'), 'enabled': True}})
+                                'hls': {'cache': str(tmp_path / 'cache'), 'enabled': True, 'ahead_seconds': 0, **getattr(request, 'param', {})}})
     app.config['TESTING'] = True
     client = app.test_client()
     login = client.post(P + '/login', json={'username': 'super', 'password': 'admin'}).json
@@ -162,3 +162,25 @@ def test_selected_song_is_always_first_even_with_warm_cache(hls):
     assert '#EXT-X-START:TIME-OFFSET=0.000000,PRECISE=YES' in manifest
     first_marker = next(line for line in manifest.splitlines() if line.startswith('#EXT-X-DATERANGE:'))
     assert f'X-TRACK-ID="{tracks[1]}"' in first_marker
+
+
+@pytest.mark.parametrize('hls', [{'ahead_seconds': 6}], indirect=True)
+def test_time_based_prefetch_replenishes_without_frontend_polling(hls):
+    app, client, headers, tracks, _, _ = hls
+    state = start(client, headers, tracks[0])
+    def prepared(seconds):
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            session = app.extensions['hls']['sessions'][state['id']]
+            if session['duration'] - session['requested_time'] >= seconds:
+                return session
+            time.sleep(.05)
+        pytest.fail('time-based queue was not replenished')
+    session = prepared(6)
+    assert len(session['entries']) > 3
+    response = client.get(state['playlist_url'].rsplit('/', 1)[0] + '/2/0.ts')
+    assert response.status_code == 200
+    session = prepared(6)
+    assert session['requested_time'] > 3
+    diagnostic = client.get(P + '/hls/sessions/' + state['id'], headers=headers).json['diagnostics']
+    assert diagnostic['ahead_seconds'] >= 6

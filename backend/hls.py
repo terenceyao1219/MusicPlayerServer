@@ -21,6 +21,7 @@ def install_hls(app, db, lock, fail, body, track, path, playback_state, base, da
     ffmpeg = shutil.which(settings.get('ffmpeg', 'ffmpeg'))
     ttl = max(60, int(settings.get('idle_seconds', 3600)))
     max_sessions = max(1, int(settings.get('max_sessions', 32)))
+    ahead_seconds = max(0, min(1800, int(settings.get('ahead_seconds', 300))))
     cache_limit = max(32, int(settings.get('cache_mb', 2048))) * 1024 * 1024
     sessions, assets = {}, {}
     pinned = set()
@@ -121,12 +122,16 @@ def install_hls(app, db, lock, fail, body, track, path, playback_state, base, da
             return secrets.choice([i for i in queue if i != previous] or queue)
         return queue[(queue.index(previous) + 1) % len(queue)]
 
+    def needs_fill(session):
+        count = len(session['entries']) - session['requested']
+        return count < 3 or (count < 20 and session['duration'] - session['requested_time'] < ahead_seconds)
+
     def fill(session):
         try:
             with app.app_context():
                 while True:
                     with guard:
-                        if session['id'] not in sessions or len(session['entries']) >= session['requested'] + 3:
+                        if session['id'] not in sessions or not needs_fill(session):
                             return
                         if len(session['entries']) >= 1000 or session['duration'] >= 86400:
                             session['finished'] = True
@@ -155,9 +160,11 @@ def install_hls(app, db, lock, fail, body, track, path, playback_state, base, da
             with guard:
                 session['building'] = False
                 pinned.clear()
+                if session['id'] in sessions:
+                    schedule(session)
 
     def schedule(session):
-        if not session['building'] and not session['error'] and not session['finished'] and len(session['entries']) < session['requested'] + 3:
+        if not session['building'] and not session['error'] and not session['finished'] and needs_fill(session):
             session['building'] = True
             pool.submit(fill, session)
 
@@ -173,7 +180,11 @@ def install_hls(app, db, lock, fail, body, track, path, playback_state, base, da
         entries = [{k: e[k] for k in ('index', 'track_id', 'name', 'start', 'duration')} for e in session['entries']]
         return {'id': session['id'], 'playlist_url': f"{PREFIX}/tracks/hls/{session['id']}/index.m3u8",
                 'ready': bool(entries), 'entries': entries, 'mode': session['mode'], 'error': session['error'],
-                'finished': session['finished'], 'position': min(session['position'], max(0, entries[0]['duration'] - .1)) if entries else session['position']}
+                'finished': session['finished'],
+                'diagnostics': {'building': session['building'], 'prepared_seconds': session['duration'],
+                                'requested_seconds': session['requested_time'],
+                                'ahead_seconds': max(0, session['duration'] - session['requested_time'])},
+                'position': min(session['position'], max(0, entries[0]['duration'] - .1)) if entries else session['position']}
 
     @bp.get('/hls/status')
     def status():
@@ -193,7 +204,7 @@ def install_hls(app, db, lock, fail, body, track, path, playback_state, base, da
                 fail('HLS 工作階段已達上限，請稍後再試', 503)
             sid = secrets.token_urlsafe(24)
             session = dict(id=sid, user_id=g.user['id'], first=state['track_id'], position=state['position'],
-                           mode=state['mode'], entries=[], duration=0., requested=0, touched=time.time(),
+                           mode=state['mode'], entries=[], duration=0., requested=0, requested_time=state['position'], touched=time.time(),
                            epoch=time.time(), building=False, error=None, finished=False)
             sessions[sid] = session
             schedule(session)
@@ -256,6 +267,7 @@ def install_hls(app, db, lock, fail, body, track, path, playback_state, base, da
             with lock:
                 track(entry['track_id'])
             session['requested'] = max(session['requested'], entry_index)
+            session['requested_time'] = max(session['requested_time'], entry['start'] + sum(s['duration'] for s in entry['segments'][:segment_index+1]))
             schedule(session)
             target = root / entry['key'] / entry['segments'][segment_index]['file']
             return send_file(target, mimetype='video/mp2t', conditional=True)
