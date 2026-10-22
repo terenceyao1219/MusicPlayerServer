@@ -1,0 +1,16 @@
+services:
+  music-player:
+    image: music-player-server:${APP_VERSION:?Run bash docker/compose.sh}
+    build:
+      context: ..
+      dockerfile: docker/main.dockerfile
+      args:
+        APP_VERSION: ${APP_VERSION:?Run bash docker/compose.sh}
+    ports:
+      - "8000:8000"
+    volumes:
+      - music-data:/app/data
+      - ../config.yaml:/app/config.yaml:ro
+    restart: unless-stopped
+volumes:
+  music-data:

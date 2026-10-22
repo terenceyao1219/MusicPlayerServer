@@ -1,0 +1,20 @@
+server:
+  host: 0.0.0.0
+  port: 8000
+  tls: false
+  certfile: null
+  keyfile: null
+storage:
+  database: data/music.sqlite3
+  music: data/music
+security:
+  cookie_secure: false
+upload:
+  max_mb: 200
+
+# Set the exact public HTTPS origin before enabling passkeys behind Nginx.
+# For local development only: rp_id: localhost, origin: http://localhost:8000
+passkeys:
+  enabled: false
+  rp_id: ""
+  origin: ""
