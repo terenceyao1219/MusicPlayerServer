@@ -92,7 +92,7 @@ localhost 開發測試可設 rp_id 為 `localhost`、origin 為 `http://localhos
 
 ## HLS 部署（1.3.0）
 
-image 建置已包含 FFmpeg；主機不需另裝。更新後請重新建置 image。原始串流仍保留。
+image 建置已包含專用精簡 FFmpeg；主機不需另裝。更新後請重新建置 image。原始串流仍保留。
 
 ```yaml
 hls:
@@ -109,3 +109,45 @@ hls:
 Nginx 一般反向代理即可，不需 WebSocket 或 Nginx RTMP 模組。保留 Cookie／Authorization／Range 標頭，讓 `/api/v1/mplayer/` 由 Flask 處理驗證；不要將快取目錄直接公開為靜態檔案。playlist 必須保持 no-store，若自行設定 proxy_cache，請排除此 API 路徑。轉碼為背景工作，建立 session 立即回 202，不需讓 HTTP 請求等待轉碼。
 
 快取大小為清理目標，使用中的資料可能暫時超過；請預留磁碟空間。工作階段最多約 24 小時或 1000 首，閒置清理在 API 請求時觸發。服務重啟後需重新播放。
+
+## 精簡 image 與編碼範圍
+
+目前使用 `python:3.12-alpine3.23`，由多階段建置產生 FFmpeg 8.1.3 與 Python 執行環境。FFmpeg 原始碼下載自官方，固定 SHA-256；編譯器、下載工具、原始碼、pytest 不會進入最終 image。Python 依賴使用 musllinux／通用 wheels，不在正式 image 安裝 Rust 或 C 編譯工具。
+
+FFmpeg 的精簡編譯選項集中於 `docker/build-ffmpeg.sh`：
+
+| 功能 | 保留內容 |
+|---|---|
+| 輸入容器 | MP3、MOV/MP4（m4a）、WAV、Ogg |
+| 音訊解碼 | MP3、AAC、ALAC、Vorbis、Opus、FLAC，以及常見 PCM、A-law、μ-law、IMA/MS ADPCM |
+| 音訊編碼 | AAC |
+| 處理 | 音訊格式轉換、重取樣、聲道轉換、必要音訊 filter |
+| 輸出 | HLS、MPEG-TS、ADTS，以及 HLS muxer 所需的內部相依功能 |
+| 協定 | 本機 file、pipe；停用 HTTP、RTMP 等 FFmpeg 網路協定 |
+| 未包含 | ffprobe、ffplay、裝置擷取、影像編解碼器及不使用的外部影音函式庫 |
+
+只縮減容器內的 FFmpeg，不更改主機／WSL 已安裝的完整版本。原始串流仍傳送原檔；HLS 僅支援上述編碼，副檔名相同但採其他罕見編碼的檔案可能無法轉換。未來擴充格式，需同步更新編譯選項與格式測試。FFmpeg 升級時須一起更新 Dockerfile 的下載網址與 SHA-256，以及 build-ffmpeg.sh 的來源紀錄；授權、來源資訊與編譯配方放在 image 的 `/usr/local/share/licenses/ffmpeg/`。
+
+首次建置需要下載並編譯 FFmpeg；後續版本若未改編譯配方可使用 Docker layer cache。預設兩個編譯工作，可用 `--build-arg FFMPEG_BUILD_JOBS=4` 調整。編譯中間層會占用本機 build cache，但不會成為推送的最終 image。
+
+本機 linux/amd64 實測，使用 `docker image inspect ... --format '{{.Size}}'` 的未壓縮大小：
+
+| 版本 | 大小 |
+|---|---:|
+| 1.3.1（Debian slim＋套件版 FFmpeg） | 611,624,559 bytes（約 612 MB） |
+| 1.3.2（Alpine＋精簡 FFmpeg） | 84,418,117 bytes（約 84 MB） |
+
+減少約 86%。Registry 傳輸為壓縮 layer，大小會不同；其他平台或相依套件更新後也可能變動。此次測試為 amd64，未宣稱已驗證 ARM image。
+
+### 驗證 image
+
+```bash
+bash docker/compose.sh build
+bash docker/test-image.sh
+# 或指定待驗證 image
+bash docker/test-image.sh music-player-server:1.3.2
+```
+
+測試需在 WSL/Linux 有 Docker 與完整 FFmpeg。腳本會產生 10 種編碼的測試檔，在暫存容器內驗證原始串流／HLS，使用主機 FFmpeg 解碼輸出確認有效；並在容器暫存目錄安裝 pytest 執行 API／通行密鑰測試，最後檢查正式 Gunicorn 啟動。測試不掛載正式資料，不發布主機 port；完成後移除測試容器及暫存檔，不會將 pytest 寫回 image。
+
+Python 本機開發測試依賴改用 `pip install -r requirements-dev.txt`；`requirements.txt` 僅包含服務執行依賴。版本更新內容統一見 [CHANGELOG.md](../CHANGELOG.md)。

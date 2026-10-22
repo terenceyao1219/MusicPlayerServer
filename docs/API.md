@@ -227,7 +227,7 @@ N/A（不需 Body）。
 
 ```json
 {
-  "version": "1.3.1"
+  "version": "1.3.2"
 }
 ```
 
