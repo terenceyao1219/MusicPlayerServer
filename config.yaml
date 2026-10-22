@@ -18,3 +18,12 @@ passkeys:
   enabled: false
   rp_id: ""
   origin: ""
+
+# HLS uses a single background encoder; cached segments are shared between sessions.
+hls:
+  enabled: true
+  ffmpeg: ffmpeg
+  cache: data/hls-cache
+  cache_mb: 2048
+  idle_seconds: 3600
+  max_sessions: 32

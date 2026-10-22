@@ -2,6 +2,17 @@ const $ = s => document.querySelector(s);
 const API = '/api/v1/mplayer';
 let token = sessionStorage.getItem('mplayer-token'), me, folders=[], tracks=[], users=[], folderId=null, selected=new Set(), playback={schema_version:1,track_id:null,position:0,mode:'folder'}, dialogAction, saveAt=0, switching=false, mediaReady=false;
 const audio=$('#audio');
+let transport='direct',hlsEntry=null,restoring=false;
+try{if(localStorage.getItem('mplayer:transport:v1')==='hls')transport='hls';}catch{}
+$('#transport').value=transport;
+const hlsEngine=typeof SonoraHLS==='undefined'?null:new SonoraHLS(audio,api,updateHLS,toast);
+function updateHLS(current){
+ if(!current||transport!=='hls')return;
+ const changed=hlsEntry!==current.entry.index;hlsEntry=current.entry.index;
+ playback.track_id=current.track_id;playback.position=current.position;mediaReady=true;
+ if(changed){const track=tracks.find(t=>t.id===current.track_id);if(track){folderId=track.folder_id;selected.clear();$('#search').value='';$('#users-view').hidden=true;$('#library-view').hidden=false;}render();storePlayback();}
+}
+
 const usernameKey='mplayer:last-username';
 function restoreUsername(){try{$('#login-form input[name="username"]').value=localStorage.getItem(usernameKey)||'';}catch{}}
 function rememberUsername(username){$('#login-form input[name="username"]').value=username;try{localStorage.setItem(usernameKey,username);}catch{}}
@@ -16,8 +27,8 @@ async function api(path,method='GET',data){
 }
 function toast(message){$('#toast').textContent=message;$('#toast').hidden=false;clearTimeout(toast.timer);toast.timer=setTimeout(()=>$('#toast').hidden=true,4500);}
 function run(fn){return async event=>{try{await fn(event);}catch(error){toast(error.message);}};}
-function signOut(){mediaReady=false;audio.pause();audio.removeAttribute('src');audio.load();token=null;sessionStorage.removeItem('mplayer-token');$('#app').hidden=true;$('#login-screen').hidden=false;$('#dialog').close();}
-async function enter(){me=await api('/me');rememberUsername(me.username);document.body.classList.toggle('user',me.role==='user');$('#identity').textContent=me.username;$('#role-badge').textContent=me.role==='admin'?'ADMIN · 管理員':'MEMBER · 聆聽者';$('#login-screen').hidden=true;$('#app').hidden=false;folderId=null;selected.clear();$('#search').value='';$('#users-view').hidden=true;$('#library-view').hidden=false;await refresh();await restoreLocal();}
+function signOut(){if(hlsEngine)hlsEngine.stop();mediaReady=false;audio.pause();audio.removeAttribute('src');audio.load();token=null;sessionStorage.removeItem('mplayer-token');$('#app').hidden=true;$('#login-screen').hidden=false;$('#dialog').close();}
+async function enter(){restoring=true;$('#transport').disabled=$('#mode').disabled=true;try{me=await api('/me');rememberUsername(me.username);document.body.classList.toggle('user',me.role==='user');$('#identity').textContent=me.username;$('#role-badge').textContent=me.role==='admin'?'ADMIN · 管理員':'MEMBER · 聆聽者';$('#login-screen').hidden=true;$('#app').hidden=false;folderId=null;selected.clear();$('#search').value='';$('#users-view').hidden=true;$('#library-view').hidden=false;await refresh();await restoreLocal();}finally{restoring=false;$('#transport').disabled=$('#mode').disabled=false;}}
 async function refresh(){[folders,tracks]=await Promise.all([api('/folders'),api('/tracks')]);if(folderId&&!folders.some(f=>f.id===folderId))folderId=null;selected.clear();render();}
 function openFolder(id){folderId=id;selected.clear();$('#search').value='';$('#users-view').hidden=true;$('#library-view').hidden=false;render();}
 const trackTitle = name => String(name).replace(/\.(mp3|m4a|wav|ogg)$/i,'');
@@ -141,8 +152,9 @@ async function restoreLocal(){
  loadAudio(false);
 }
 async function persist(){
- if(token&&me&&!switching){
-  if(playback.track_id&&mediaReady&&audio.hasAttribute('src'))playback.position=Number.isFinite(audio.currentTime)?audio.currentTime:0;
+ if(token&&me&&!switching&&!restoring){
+  if(transport==='hls'){if(hlsEngine)updateHLS(hlsEngine.current());}
+  else if(playback.track_id&&mediaReady&&audio.hasAttribute('src'))playback.position=Number.isFinite(audio.currentTime)?audio.currentTime:0;
   storePlayback();
  }
 }
@@ -157,19 +169,30 @@ function loadAudio(autoplay){
   $('#users-view').hidden=true;$('#library-view').hidden=false;
  }
  mediaReady=false;audio.onloadedmetadata=null;updateNow();$('#mode').value=playback.mode;
+ if(hlsEngine)hlsEngine.stop();hlsEntry=null;
  if(!playback.track_id){audio.removeAttribute('src');audio.load();render();return;}
+ if(transport==='hls'){
+  audio.removeAttribute('src');audio.load();render();$('#elapsed').textContent=clock(playback.position);$('#duration').textContent='—';
+  if(!autoplay)return;
+  if(!hlsEngine)throw Error('HLS 播放元件載入失敗');
+  toast('正在準備 HLS，首次播放需要轉換歌曲…');
+  $('#hls-status').textContent='HLS 準備中，可切回原始串流';
+  return hlsEngine.start({...playback}).finally(()=>{$('#hls-status').textContent='';});
+ }
  const position=playback.position,id=playback.track_id;
  audio.src=API+`/tracks/${id}/stream`;
  audio.onloadedmetadata=()=>{if(playback.track_id!==id)return;if(Number.isFinite(audio.duration))audio.currentTime=Math.min(position,audio.duration);mediaReady=true;if(autoplay)audio.play().catch(()=>toast('請按播放按鈕開始聆聽'));};
  audio.load();render();
 }
 async function choose(id){
- if(switching)return;switching=true;
- try{const result=await api('/playback/state','POST',{schema_version:1,track_id:id,position:0,mode:playback.mode});mediaReady=false;audio.pause();playback=result.state;randomHistory=[];randomFuture=[];storePlayback();loadAudio(true);}
+ if(switching||restoring)return;switching=true;
+ try{const result=await api('/playback/state','POST',{schema_version:1,track_id:id,position:0,mode:playback.mode});mediaReady=false;audio.pause();playback=result.state;randomHistory=[];randomFuture=[];storePlayback();await loadAudio(true);}
  finally{switching=false;}
 }
 async function advance(direction,trigger='manual'){
- if(switching)return;await persist();if(switching)return;switching=true;
+ if(switching||restoring)return;await persist();if(switching)return;
+ if(transport==='hls'&&playback.mode!=='single'&&trigger==='manual'&&hlsEngine&&hlsEngine.step(direction)){await persist();return;}
+ switching=true;
  try{
   const previous=playback.track_id,isRandom=playback.mode==='random';
   let target;
@@ -181,18 +204,27 @@ async function advance(direction,trigger='manual'){
    else{randomHistory.push(previous);if(historyTarget)randomFuture.pop();else randomFuture=[];}
    if(randomHistory.length>200)randomHistory.shift();
   }
-  mediaReady=false;audio.pause();playback={...playback,track_id:target,position:0};storePlayback();loadAudio(true);
+  mediaReady=false;audio.pause();playback={...playback,track_id:target,position:0};storePlayback();await loadAudio(true);
  }finally{switching=false;}
 }
-$('#play').onclick=run(async()=>{if(!playback.track_id){if(!visibleTracks().length)throw Error('目前沒有可播放的音樂');await choose(visibleTracks()[0].id);}else if(audio.paused)await audio.play();else audio.pause();});
+$('#play').onclick=run(async()=>{if(restoring)return;if(transport==='hls'&&hlsEngine&&hlsEngine.loading){toast('HLS 正在定位所選歌曲，請稍候。');return;}if(!playback.track_id){if(!visibleTracks().length)throw Error('目前沒有可播放的音樂');await choose(visibleTracks()[0].id);}else if(transport==='hls'&&hlsEngine&&(!hlsEngine.session||hlsEngine.failed)){if(!switching){switching=true;try{await loadAudio(true);}finally{switching=false;}}}else if(audio.paused)await audio.play();else audio.pause();});
 $('#next').onclick=run(()=>advance(1));$('#previous').onclick=run(()=>advance(-1));
-$('#mode').onchange=run(async event=>{playback.mode=event.target.value;randomHistory=[];randomFuture=[];await persist();});
+$('#mode').onchange=run(async event=>{if(switching||restoring){event.target.value=playback.mode;return;}await persist();playback.mode=event.target.value;randomHistory=[];randomFuture=[];storePlayback();if(transport==='hls'){const playing=!audio.paused;switching=true;try{audio.pause();await loadAudio(playing);}finally{switching=false;}}});
+$('#transport').onchange=run(async event=>{
+ if(restoring||(switching&&!(hlsEngine&&hlsEngine.loading))){event.target.value=transport;return;}
+ if(hlsEngine&&hlsEngine.loading)hlsEngine.stop();
+ await persist();const playing=!audio.paused;transport=event.target.value;
+ try{localStorage.setItem('mplayer:transport:v1',transport);}catch{warnStorage();}
+ switching=true;try{mediaReady=false;audio.pause();await loadAudio(playing);}finally{switching=false;}
+});
 $('#volume').oninput=event=>audio.volume=Number(event.target.value);audio.volume=.8;
-$('#seek').onchange=run(async event=>{if(Number.isFinite(audio.duration)){audio.currentTime=Number(event.target.value);await persist();}});
+$('#seek').onchange=run(async event=>{if(transport==='hls'&&hlsEngine){hlsEngine.seek(Number(event.target.value));await persist();}else if(Number.isFinite(audio.duration)){audio.currentTime=Number(event.target.value);await persist();}});
 const clock=seconds=>Number.isFinite(seconds)?`${Math.floor(seconds/60)}:${String(Math.floor(seconds%60)).padStart(2,'0')}`:'0:00';
-audio.ontimeupdate=()=>{$('#elapsed').textContent=clock(audio.currentTime);$('#duration').textContent=clock(audio.duration);$('#seek').max=Number.isFinite(audio.duration)?audio.duration:0;$('#seek').value=audio.currentTime;if(Date.now()-saveAt>5000){saveAt=Date.now();persist().catch(error=>{audio.pause();toast(error.message);});}};
-audio.onplay=()=>{$('#play').classList.toggle('is-playing',true);$('#play').setAttribute('aria-label','暫停');};audio.onpause=()=>{$('#play').classList.toggle('is-playing',false);$('#play').setAttribute('aria-label','播放');persist().catch(error=>toast(error.message));};audio.onended=run(()=>advance(1,'ended'));audio.onerror=()=>{if(audio.hasAttribute('src'))toast('無法播放：請確認檔案格式、資料夾權限或重新登入。');};
+audio.ontimeupdate=()=>{const current=transport==='hls'&&hlsEngine?hlsEngine.current():null;if(current)updateHLS(current);const position=current?current.position:transport==='hls'?playback.position:audio.currentTime,duration=current?current.duration:transport==='hls'?0:audio.duration;$('#elapsed').textContent=clock(position);$('#duration').textContent=clock(duration);$('#seek').max=Number.isFinite(duration)?duration:0;$('#seek').value=position;if(Date.now()-saveAt>5000){saveAt=Date.now();persist().catch(error=>{audio.pause();toast(error.message);});}};
+audio.onplay=()=>{$('#play').classList.toggle('is-playing',true);$('#play').setAttribute('aria-label','暫停');};audio.onpause=()=>{$('#play').classList.toggle('is-playing',false);$('#play').setAttribute('aria-label','播放');persist().catch(error=>toast(error.message));};audio.onended=run(()=>advance(1,'ended'));audio.onerror=()=>{if(transport==='hls'&&hlsEngine)hlsEngine.failed=true;if(audio.hasAttribute('src'))toast('無法播放：請確認檔案格式、資料夾權限或重新登入。');};
 window.addEventListener('pagehide',()=>{persist();});
+window.addEventListener('pageshow',()=>{if(transport==='hls'&&hlsEngine)hlsEngine.refresh().catch(error=>toast(error.message));});
+if(document.addEventListener)document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&transport==='hls'&&hlsEngine)hlsEngine.refresh().then(()=>persist()).catch(error=>toast(error.message));});
 // Other tabs may save their own resume point; never apply storage events to live playback.
 if(token)enter().catch(error=>{signOut();toast(error.message);});
 

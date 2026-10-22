@@ -12,6 +12,7 @@
 - [音樂管理](#tracks)
 - [掃描同步](#sync)
 - [播放器與串流](#playback)
+- [HLS 背景連播](#hls)
 - [Face ID／通行密鑰](#passkeys)
 - [健康檢查與靜態資源](#health)
 - [完整呼叫範例](#example)
@@ -36,7 +37,7 @@
 
 Token 有效 86400 秒（24 小時），不滑動延長，沒有 refresh token。伺服器僅保存 Token 雜湊。密碼登入與通行密鑰登入都會設定 `mplayer_media` Cookie：HttpOnly、SameSite=Strict、Path=/api/v1/mplayer/tracks/。`security.cookie_secure`、`server.tls` 或 HTTPS passkeys origin 任一符合時使用 Secure。
 
-只有歌曲串流 GET/HEAD 可使用此 Cookie；其他受保護 API 仍須 Bearer。若串流同時帶 Bearer 與 Cookie，優先使用 Bearer。修改帳號會撤銷該帳號全部 session；登出僅撤銷目前 Token。
+只有歌曲串流與 HLS playlist／segment 的 GET/HEAD 可使用此 Cookie；其他受保護 API 仍須 Bearer。若串流同時帶 Bearer 與 Cookie，優先使用 Bearer。修改帳號會撤銷該帳號全部 session；登出僅撤銷目前 Token。
 
 ### 共用欄位限制
 
@@ -226,7 +227,7 @@ N/A（不需 Body）。
 
 ```json
 {
-  "version": "1.2.1"
+  "version": "1.3.1"
 }
 ```
 
@@ -1347,6 +1348,300 @@ schema_version、position 僅作狀態驗證，不影響排序。目標歌曲串
 **主要錯誤**
 
 400：參數不合法；403：目前歌曲無權限；404：目前歌曲／檔案不存在，或無可選曲目。
+
+<a id="hls"></a>
+## HLS 背景連播（1.3.0）
+
+原始 `/tracks/{id}/stream` 保留。HLS 每次建立獨立工作階段，模式與佇列不依帳號共用；工作階段屬於建立者，其他帳號無法讀取。Server 產生 AAC MPEG-TS 片段與 EVENT 清單，片段請求會補足目前已請求曲目後的兩首，因此自然跨曲不需要 JavaScript 呼叫 resolve。
+
+### 工作階段回應欄位
+
+| 欄位 | 型別 | 說明 |
+|---|---|---|
+| id | string | 隨機工作階段 ID；不是認證 Token |
+| playlist_url | string | 同源 HLS 清單路徑 |
+| ready | boolean | 第一首已轉換完成，可以載入清單 |
+| entries | object[] | 已準備的歌曲時間對照；不代表使用者已經聽到 |
+| entries[].index | integer | 本工作階段內的播放次序，從 0 開始；同曲重播有不同 index |
+| entries[].track_id | integer | 歌曲 ID |
+| entries[].name | string | 完整檔名 |
+| entries[].start | number | HLS 累積媒體時間，秒 |
+| entries[].duration | number | 轉碼後片段總長，秒，可能含 AAC 編碼補齊 |
+| mode | string | single / folder / global / random |
+| position | number | 第一首起播秒數，ready 時限制在其長度內；不是即時播放位置 |
+| error | string / null | 背景轉碼錯誤；失敗時請重新建立或切回原始串流 |
+| finished | boolean | 已到工作階段長度上限，不再補曲 |
+
+前端以實際 audio.currentTime 對照 entries 計算歌曲與歌曲內秒數。此版清單提供 EXT-X-PROGRAM-DATE-TIME 與 EXT-X-DATERANGE 的 X-TRACK-ID，未注入 Timed ID3，亦不保證 Safari 將自訂 tag 自動轉成事件。不能將最後下載的片段視為最後聽到的位置。
+
+
+### 檢查 HLS 可用性
+
+| 項目 | 說明 |
+|---|---|
+| Purpose | 檢查設定與 FFmpeg 執行檔。 |
+| HTTP Method | `GET` |
+| End-point | `{{API-Prefix}}/hls/status` |
+| 權限 | 登入；工作階段只限建立者 |
+| HTTP Header | `Authorization: Bearer <access_token>` |
+
+**URL Param**
+
+N/A
+
+**Body**
+
+N/A（不需 Body）。
+
+
+
+**Response — HTTP 200**
+
+```json
+{
+  "enabled": true,
+  "reason": null
+}
+```
+
+**行為說明**
+
+enabled 為 boolean；reason 為停用原因字串或 null。不檢查每首歌曲是否可解碼。
+
+**主要錯誤**
+
+401：未登入。
+
+
+### 建立 HLS 工作階段
+
+| 項目 | 說明 |
+|---|---|
+| Purpose | 建立獨立播放佇列並排入背景轉碼。 |
+| HTTP Method | `POST` |
+| End-point | `{{API-Prefix}}/hls/sessions` |
+| 權限 | 登入；工作階段只限建立者 |
+| HTTP Header | `Authorization: Bearer <access_token>`<br>`Content-Type: application/json` |
+
+**URL Param**
+
+N/A
+
+**Body**
+
+```json
+{
+  "track_id": 123,
+  "position": 85.5,
+  "mode": "folder"
+}
+```
+
+| 欄位 | 型別 | 必填 | 說明 |
+|---|---|---|---|
+| track_id | integer | 是 | 可播放歌曲 ID，不可為 null |
+| position | number | 否 | 非負有限秒數，預設 0 |
+| mode | string | 否 | single / folder / global / random，預設 folder |
+| schema_version | integer | 否 | 固定 1，預設 1 |
+
+**Response — HTTP 202**
+
+```json
+{
+  "id": "<session_id>",
+  "playlist_url": "/api/v1/mplayer/tracks/hls/<session_id>/index.m3u8",
+  "ready": false,
+  "entries": [],
+  "mode": "folder",
+  "position": 85.5,
+  "error": null,
+  "finished": false
+}
+```
+
+**行為說明**
+
+回傳 202 不表示已可播放；輪詢 GET 工作階段，直到 ready=true。若有 error 應停止等待。第一首完整轉換後才提供片段；已有快取則可快速使用。
+
+**主要錯誤**
+
+400：狀態不合法；403：沒有歌曲權限；404：歌曲／檔案不存在；503：停用、缺少 FFmpeg 或工作階段達上限。
+
+
+### 查詢 HLS 工作階段
+
+| 項目 | 說明 |
+|---|---|
+| Purpose | 取得準備進度與歌曲時間表。 |
+| HTTP Method | `GET` |
+| End-point | `{{API-Prefix}}/hls/sessions/{sid}` |
+| 權限 | 登入；工作階段只限建立者 |
+| HTTP Header | `Authorization: Bearer <access_token>` |
+
+**URL Param**
+
+| 欄位 | 位置 | 型別 | 必填 | 說明 |
+|---|---|---|---|---|
+| sid | Path | string | 是 | 建立時回傳的 id |
+
+**Body**
+
+N/A（不需 Body）。
+
+
+
+**Response — HTTP 200**
+
+```json
+{
+  "id": "<session_id>",
+  "playlist_url": "/api/v1/mplayer/tracks/hls/<session_id>/index.m3u8",
+  "ready": true,
+  "entries": [
+    {
+      "index": 0,
+      "track_id": 123,
+      "name": "song.mp3",
+      "start": 0,
+      "duration": 240.021333
+    }
+  ],
+  "mode": "folder",
+  "position": 85.5,
+  "error": null,
+  "finished": false
+}
+```
+
+**行為說明**
+
+只回傳已準備的 entries，不是即時聆聽狀態。頁面回到前景時重新取得時間表，再對照播放器位置。
+
+**主要錯誤**
+
+401：未登入；403／404：佇列歌曲權限被移除或歌曲刪除；404：工作階段不存在、過期或不屬於目前帳號。
+
+
+### 停止 HLS 工作階段
+
+| 項目 | 說明 |
+|---|---|
+| Purpose | 移除工作階段，禁止後續片段讀取。 |
+| HTTP Method | `DELETE` |
+| End-point | `{{API-Prefix}}/hls/sessions/{sid}` |
+| 權限 | 登入；工作階段只限建立者 |
+| HTTP Header | `Authorization: Bearer <access_token>` |
+
+**URL Param**
+
+| 欄位 | 位置 | 型別 | 必填 | 說明 |
+|---|---|---|---|---|
+| sid | Path | string | 是 | 建立時回傳的 id |
+
+**Body**
+
+N/A（不需 Body）。
+
+
+
+**Response — HTTP 200**
+
+```json
+{
+  "ok": true
+}
+```
+
+**行為說明**
+
+已下載資料無法追回；共享歌曲快取不立即刪除。正在進行的單首轉碼可能繼續完成，但不再添加至已刪工作階段。
+
+**主要錯誤**
+
+401：未登入；404：工作階段不存在、過期或不屬於目前帳號。
+
+
+### 取得 HLS 播放清單
+
+| 項目 | 說明 |
+|---|---|
+| Purpose | 取得持續擴展的 EVENT 播放清單。 |
+| HTTP Method | `GET / HEAD` |
+| End-point | `{{API-Prefix}}/tracks/hls/{sid}/index.m3u8` |
+| 權限 | 登入；工作階段只限建立者 |
+| HTTP Header | `Authorization: Bearer <access_token>`；也可用 mplayer_media Cookie |
+
+**URL Param**
+
+| 欄位 | 位置 | 型別 | 必填 | 說明 |
+|---|---|---|---|---|
+| sid | Path | string | 是 | 建立時回傳的 id |
+
+**Body**
+
+N/A（不需 Body）。
+
+
+
+**Response — HTTP 200**
+
+回傳媒體內容，見下方說明。
+
+**行為說明**
+
+Content-Type: application/vnd.apple.mpegurl；Cache-Control: no-store。EXT-X-START 的 TIME-OFFSET 為工作階段第一首的實際起播秒數（與 position 一致）。前端等目標可 seek 並確認定位後才播放；不在 loadedmetadata 階段直接 seek。Body 是 m3u8 文字，包含約 6 秒片段、歌曲邊界 DISCONTINUITY、時間與曲目 ID。HEAD 無 Body。每次請求檢查目前帳號與佇列歌曲權限。清單達 1000 首或累積約 24 小時後加 ENDLIST；轉碼失敗也結束既有清單。
+
+**主要錯誤**
+
+401：認證失效；403：歌曲權限撤銷；404：工作階段／歌曲不存在；503：第一首仍在準備或準備失敗。
+
+
+### 取得 HLS 音訊片段
+
+| 項目 | 說明 |
+|---|---|
+| Purpose | 取得清單中指定的音訊片段。 |
+| HTTP Method | `GET / HEAD` |
+| End-point | `{{API-Prefix}}/tracks/hls/{sid}/{entry_index}/{segment_index}.ts` |
+| 權限 | 登入；工作階段只限建立者 |
+| HTTP Header | `Authorization: Bearer <access_token>`；也可用 mplayer_media Cookie |
+
+**URL Param**
+
+| 欄位 | 位置 | 型別 | 必填 | 說明 |
+|---|---|---|---|---|
+| sid | Path | string | 是 | 建立時回傳的 id |
+| entry_index | Path | integer | 是 | 歌曲播放次序，從 0 開始 |
+| segment_index | Path | integer | 是 | 該次歌曲的片段序號，從 0 開始 |
+
+**Body**
+
+N/A（不需 Body）。
+
+
+
+**Response — HTTP 200**
+
+回傳媒體內容，見下方說明。
+
+**行為說明**
+
+使用清單內的 URL，不自行推算。Content-Type: video/mp2t（MPEG-TS 容器，只有 AAC 音訊）；200 完整片段，合法 byte Range 可回 206。檢查所屬曲目的資料夾權限；每次請求使工作階段續期並觸發預先補曲。
+
+**主要錯誤**
+
+401：認證失效；403：歌曲權限撤銷；404：工作階段、歌曲或片段不存在；416：Range 無法滿足。
+
+
+### 保存、清理與限制
+
+- 播放方式以 localStorage 的 `mplayer:transport:v1` 保存 `direct` 或 `hls`；與既有循環模式分開，不會因其他視窗變動而自動切換。
+- 歌曲／進度仍以 `mplayer:playback:v1:<user_id>` 保存。下次先用 `/playback/restore` 驗證，使用者按播放才建立新 HLS 工作階段；不保存舊 HLS URL 作為永久續播網址。
+- 單曲循環自然播完會重播同曲；手動上下首仍走原有 resolve 規則。其他模式的手動上下首優先使用已準備的 entries；隨機不保存跨工作階段歷史。
+- 狀態／清單／片段請求會更新閒置時間；預設 3600 秒回收，最多 32 個工作階段。程序重啟即失效；只支援單一 Gunicorn worker。
+- 快取重用依原檔路徑、大小與修改時間識別。cache_mb 預設 2048，僅清理未被工作階段使用的舊快取，不是硬性磁碟上限。
+- 音訊 Cookie 有效期仍為登入後 24 小時；HLS 不延長登入。iOS 背景 JS 可能暫停，所以曲名更新與本機最後保存位置可能延遲。
+
 
 <a id="passkeys"></a>
 ## Face ID／通行密鑰

@@ -79,3 +79,24 @@ test('display titles omit only the supported final extension without changing fi
  assert.equal(a.run('tracks[0].name'),'Artist.Live.MP3');
  assert.match(a.run("$('#tracks').innerHTML"),/>MP3</);
 });
+
+test('playback transport selection survives reload independently of account state',async()=>{
+ const storage=new Map(),a=player(storage);
+ await a.run("$('#transport').onchange({target:{value:'hls'}})");
+ assert.equal(storage.get('mplayer:transport:v1'),'hls');
+ const b=player(storage);
+ assert.equal(b.run('transport'),'hls');assert.equal(b.run("$('#transport').value"),'hls');
+ assert.equal(b.run('playback.mode'),'folder');
+ await b.run("$('#transport').onchange({target:{value:'direct'}})");
+ assert.equal(storage.get('mplayer:transport:v1'),'direct');
+ assert.equal(a.run('transport'),'hls');
+});
+
+test('restoring state cannot overwrite the saved song before loading finishes',async()=>{
+ const stored=JSON.stringify({schema_version:1,track_id:123,position:42,mode:'random'});
+ const storage=new Map([['mplayer:playback:v1:1',stored]]),a=player(storage);
+ a.run('restoring=true');await a.run('persist()');
+ await a.run("$('#transport').onchange({target:{value:'hls'}})");
+ assert.equal(storage.get('mplayer:playback:v1:1'),stored);
+ assert.equal(a.run('transport'),'direct');
+});

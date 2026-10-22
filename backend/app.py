@@ -145,7 +145,7 @@ def create_app(config_path=None, overrides=None):
             return
         token = request.headers.get("Authorization", "")
         token = token[7:] if token.startswith("Bearer ") else ""
-        if request.endpoint == "stream" and request.method in {"GET", "HEAD"} and not token:
+        if request.endpoint in {"stream", "hls.playlist", "hls.segment"} and request.method in {"GET", "HEAD"} and not token:
             token = request.cookies.get("mplayer_media", "")
         g.token = token_hash(token)
         g.user = db().execute("SELECT u.* FROM users u JOIN sessions s ON s.user_id=u.id WHERE s.token=? AND s.expires>?",
@@ -157,7 +157,7 @@ def create_app(config_path=None, overrides=None):
     def headers(response):
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
-        response.headers["Content-Security-Policy"] = "default-src 'self'; style-src 'self'; script-src 'self'; media-src 'self'; frame-ancestors 'none'"
+        response.headers["Content-Security-Policy"] = "default-src 'self'; style-src 'self'; script-src 'self'; media-src 'self' blob:; worker-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'"
         if request.path.startswith(PREFIX):
             response.headers["Cache-Control"] = "no-store"
         return response
@@ -653,5 +653,8 @@ def create_app(config_path=None, overrides=None):
     def health():
         db().execute("SELECT 1")
         return {"status": "ok"}
+
+    from .hls import install_hls
+    install_hls(app, db, lock, fail, body, track, path, playback_state, BASE, database)
 
     return app

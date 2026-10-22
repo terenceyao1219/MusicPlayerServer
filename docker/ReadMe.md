@@ -89,3 +89,23 @@ Nginx 可終結 TLS，Flask 後端維持 HTTP；驗證使用明確設定的 publ
 更新 requirements 或 Docker image 後重啟服務；舊版 YAML 沒有 passkeys 區段仍可正常使用密碼登入。每位使用者先用密碼登入，從左側「Face ID／通行密鑰設定」輸入目前密碼完成綁定，下次在登入頁輸入帳號並按「Face ID／通行密鑰登入」。實際驗證方式由裝置決定，可能是 Face ID、Touch ID、Windows Hello、PIN 或同步的通行密鑰。
 
 localhost 開發測試可設 rp_id 為 `localhost`、origin 為 `http://localhost:8000`，並保持 cookie_secure 為 false。這項例外不適用於從手機存取電腦的區網 HTTP IP。
+
+## HLS 部署（1.3.0）
+
+image 建置已包含 FFmpeg；主機不需另裝。更新後請重新建置 image。原始串流仍保留。
+
+```yaml
+hls:
+  enabled: true
+  ffmpeg: ffmpeg
+  cache: data/hls-cache
+  cache_mb: 2048
+  idle_seconds: 3600
+  max_sessions: 32
+```
+
+舊 config.yaml 沒有 hls 區段也會使用預設值；cache 未指定時預設在資料庫旁的 hls-cache。目錄需要容器 UID 10001 可寫。請保留單一 Gunicorn worker（內部有多執行緒），HLS 工作階段在程序記憶體，不支援多 worker 或未做黏著路由的多副本。
+
+Nginx 一般反向代理即可，不需 WebSocket 或 Nginx RTMP 模組。保留 Cookie／Authorization／Range 標頭，讓 `/api/v1/mplayer/` 由 Flask 處理驗證；不要將快取目錄直接公開為靜態檔案。playlist 必須保持 no-store，若自行設定 proxy_cache，請排除此 API 路徑。轉碼為背景工作，建立 session 立即回 202，不需讓 HTTP 請求等待轉碼。
+
+快取大小為清理目標，使用中的資料可能暫時超過；請預留磁碟空間。工作階段最多約 24 小時或 1000 首，閒置清理在 API 請求時觸發。服務重啟後需重新播放。

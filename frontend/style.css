@@ -19,3 +19,8 @@ body.resizing-sidebar{cursor:col-resize;user-select:none}
 @media(max-width:700px){#sidebar-resizer{display:none}#manage-passkeys{display:block}}
 #passkey-login{width:100%;margin:0 0 10px}#passkey-status{font-size:12px;line-height:1.6}
 .passkey-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid var(--line)}.passkey-row span{overflow-wrap:anywhere}
+
+.player-options{flex-wrap:wrap;justify-content:flex-end;gap:8px}.player-options #transport{max-width:150px}
+@media(max-width:700px){.player-options select{max-width:100%;font-size:11px}}
+
+#hls-status{flex-basis:100%;font-size:11px;color:var(--muted)}#hls-status:empty{display:none}
