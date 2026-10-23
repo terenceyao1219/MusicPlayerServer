@@ -124,7 +124,9 @@ def install_hls(app, db, lock, fail, body, track, path, playback_state, base, da
 
     def needs_fill(session):
         count = len(session['entries']) - session['requested']
-        return count < 3 or (count < 20 and session['duration'] - session['requested_time'] < ahead_seconds)
+        frontier = max(session['requested_time'], session['published_time'])
+        return (count < 3 or (session['publication_started'] is not None and session['duration'] - session['published_time'] < 30)
+                or (count < 20 and session['duration'] - frontier < ahead_seconds))
 
     def fill(session):
         try:
@@ -183,6 +185,7 @@ def install_hls(app, db, lock, fail, body, track, path, playback_state, base, da
                 'finished': session['finished'],
                 'diagnostics': {'building': session['building'], 'prepared_seconds': session['duration'],
                                 'requested_seconds': session['requested_time'],
+                                'published_seconds': session['published_time'],
                                 'ahead_seconds': max(0, session['duration'] - session['requested_time'])},
                 'position': min(session['position'], max(0, entries[0]['duration'] - .1)) if entries else session['position']}
 
@@ -205,7 +208,8 @@ def install_hls(app, db, lock, fail, body, track, path, playback_state, base, da
             sid = secrets.token_urlsafe(24)
             session = dict(id=sid, user_id=g.user['id'], first=state['track_id'], position=state['position'],
                            mode=state['mode'], entries=[], duration=0., requested=0, requested_time=state['position'], touched=time.time(),
-                           epoch=time.time(), building=False, error=None, finished=False)
+                           epoch=time.time(), publication_started=None, publication_base=0., published_time=0.,
+                           building=False, error=None, finished=False)
             sessions[sid] = session
             schedule(session)
             return snapshot(session), 202
@@ -239,19 +243,36 @@ def install_hls(app, db, lock, fail, body, track, path, playback_state, base, da
                 for entry in session['entries']:
                     track(entry['track_id'])
             schedule(session)
+            # Publish on a clock, independently of segment downloads or JS.
+            # An unchanged, open EVENT playlist can be treated as a stale stream.
+            now = time.monotonic()
+            if session['publication_started'] is None:
+                session['publication_started'] = now
+                session['publication_base'] = session['duration']
+            # Match TARGETDURATION; each tick exceeds a 6s segment plus its AAC frame.
+            horizon = session['publication_base'] + int((now - session['publication_started']) / 7) * 7
+            horizon = max(horizon, session['published_time'])
             # Six-second segments may include one AAC frame past the target.
             lines = ['#EXTM3U', '#EXT-X-VERSION:6', '#EXT-X-TARGETDURATION:7',
                      '#EXT-X-PLAYLIST-TYPE:EVENT', '#EXT-X-MEDIA-SEQUENCE:0',
                      f'#EXT-X-START:TIME-OFFSET={snapshot(session)["position"]:.6f},PRECISE=YES']
+            published = 0.
             for entry in session['entries']:
+                if published >= horizon - .000001:
+                    break
                 if entry['index']:
                     lines.append('#EXT-X-DISCONTINUITY')
                 date = datetime.fromtimestamp(session['epoch'] + entry['start'], timezone.utc).isoformat()
                 lines += [f'#EXT-X-PROGRAM-DATE-TIME:{date}',
                           f'#EXT-X-DATERANGE:ID="song-{entry["index"]}",CLASS="com.sonora.track",START-DATE="{date}",DURATION={entry["duration"]:.6f},X-TRACK-ID="{entry["track_id"]}"']
                 for index, segment in enumerate(entry['segments']):
+                    if published >= horizon - .000001:
+                        break
                     lines += [f'#EXTINF:{segment["duration"]:.6f},', f'{entry["index"]}/{index}.ts']
-            if session['finished'] or session['error']:
+                    published += segment['duration']
+            session['published_time'] = published
+            schedule(session)
+            if (session['finished'] or session['error']) and published >= session['duration'] - .001:
                 lines.append('#EXT-X-ENDLIST')
             return Response('\n'.join(lines) + '\n', mimetype='application/vnd.apple.mpegurl')
 

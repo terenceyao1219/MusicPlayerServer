@@ -184,3 +184,36 @@ def test_time_based_prefetch_replenishes_without_frontend_polling(hls):
     assert session['requested_time'] > 3
     diagnostic = client.get(P + '/hls/sessions/' + state['id'], headers=headers).json['diagnostics']
     assert diagnostic['ahead_seconds'] >= 6
+
+
+def test_event_playlist_grows_without_segment_requests_or_metadata_polling(hls, monkeypatch):
+    from types import SimpleNamespace
+    import backend.hls as module
+
+    app, client, headers, tracks, _, _ = hls
+    state = start(client, headers, tracks[0])
+    session = app.extensions['hls']['sessions'][state['id']]
+    clock = [100.]
+    monkeypatch.setattr(module, 'time', SimpleNamespace(time=time.time, monotonic=lambda: clock[0]))
+    first = client.get(state['playlist_url']).text
+    # Wait for the encoder, without fetching metadata or audio segments.
+    app.extensions['hls']['executor'].submit(lambda: None).result(timeout=20)
+    assert client.get(state['playlist_url']).text == first
+    previous = first
+    for elapsed in (7, 14, 21):
+        clock[0] = 100. + elapsed
+        current = client.get(state['playlist_url']).text
+        assert current.startswith(previous)  # EVENT history is immutable
+        assert current.count('#EXTINF:') > previous.count('#EXTINF:')
+        assert '#EXT-X-ENDLIST' not in current
+        previous = current
+    assert session['requested_time'] == 0
+    assert session['published_time'] > session['publication_base']
+    # A terminal stream must still publish its entire prepared tail.
+    app.extensions['hls']['executor'].submit(lambda: None).result(timeout=20)
+    session['finished'] = True
+    assert '#EXT-X-ENDLIST' not in client.get(state['playlist_url']).text
+    clock[0] += 1000
+    final = client.get(state['playlist_url']).text
+    assert final.startswith(previous)
+    assert final.endswith('#EXT-X-ENDLIST\n')

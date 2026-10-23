@@ -100,3 +100,13 @@ test('restoring state cannot overwrite the saved song before loading finishes',a
  assert.equal(storage.get('mplayer:playback:v1:1'),stored);
  assert.equal(a.run('transport'),'direct');
 });
+
+
+test('a failed progress save does not pause media playback',async()=>{
+ const a=player();await a.run('choose(10)');a.audio.onloadedmetadata();
+ await a.audio.play();
+ a.run("persist=async()=>{throw Error('save failed');};saveAt=0;");
+ a.audio.ontimeupdate();
+ await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(a.audio.paused,false);
+});
