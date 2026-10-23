@@ -10,7 +10,7 @@ function updateHLS(current){
  if(!current||transport!=='hls')return;
  const changed=hlsEntry!==current.entry.index;hlsEntry=current.entry.index;
  playback.track_id=current.track_id;playback.position=current.position;mediaReady=true;
- if(changed){const track=tracks.find(t=>t.id===current.track_id);if(track){folderId=track.folder_id;selected.clear();$('#search').value='';$('#users-view').hidden=true;$('#library-view').hidden=false;}render();storePlayback();}
+ if(changed){const track=tracks.find(t=>t.id===current.track_id);if(track){folderId=track.folder_id;selected.clear();$('#search').value='';}render();storePlayback();}
 }
 
 const usernameKey='mplayer:last-username';
@@ -28,9 +28,15 @@ async function api(path,method='GET',data){
 function toast(message){$('#toast').textContent=message;$('#toast').hidden=false;clearTimeout(toast.timer);toast.timer=setTimeout(()=>$('#toast').hidden=true,4500);}
 function run(fn){return async event=>{try{await fn(event);}catch(error){toast(error.message);}};}
 function signOut(){if(hlsEngine)hlsEngine.stop();mediaReady=false;audio.pause();audio.removeAttribute('src');audio.load();token=null;sessionStorage.removeItem('mplayer-token');$('#app').hidden=true;$('#login-screen').hidden=false;$('#dialog').close();}
-async function enter(){restoring=true;$('#transport').disabled=$('#mode').disabled=true;try{me=await api('/me');rememberUsername(me.username);document.body.classList.toggle('user',me.role==='user');$('#identity').textContent=me.username;$('#role-badge').textContent=me.role==='admin'?'ADMIN · 管理員':'MEMBER · 聆聽者';$('#login-screen').hidden=true;$('#app').hidden=false;folderId=null;selected.clear();$('#search').value='';$('#users-view').hidden=true;$('#library-view').hidden=false;await refresh();await restoreLocal();}finally{restoring=false;$('#transport').disabled=$('#mode').disabled=false;}}
+async function enter(){restoring=true;$('#transport').disabled=$('#mode').disabled=true;try{me=await api('/me');rememberUsername(me.username);document.body.classList.toggle('user',me.role==='user');$('#identity').textContent=me.username;$('#role-badge').textContent=me.role==='admin'?'ADMIN · 管理員':'MEMBER · 聆聽者';$('#login-screen').hidden=true;$('#app').hidden=false;folderId=null;selected.clear();$('#search').value='';showView('library');await refresh();await restoreLocal();}finally{restoring=false;$('#transport').disabled=$('#mode').disabled=false;}}
 async function refresh(){[folders,tracks]=await Promise.all([api('/folders'),api('/tracks')]);if(folderId&&!folders.some(f=>f.id===folderId))folderId=null;selected.clear();render();}
-function openFolder(id){folderId=id;selected.clear();$('#search').value='';$('#users-view').hidden=true;$('#library-view').hidden=false;render();}
+function showView(name){
+ for(const view of ['library','users','settings']){
+  $('#'+view+'-view').hidden=view!==name;
+  $('#nav-'+view).classList.toggle('active',view===name);
+ }
+}
+function openFolder(id){folderId=id;selected.clear();$('#search').value='';showView('library');render();}
 const trackTitle = name => String(name).replace(/\.(mp3|m4a|wav|ogg)$/i,'');
 function visibleTracks(){const query=$('#search').value.toLowerCase();return tracks.filter(t=>(folderId!==null&&t.folder_id===folderId)&&t.name.toLowerCase().includes(query));}
 const folderIcon='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7V5h7l2 2h9v13H3Z"/></svg>';
@@ -126,7 +132,7 @@ $('#sync-library').onclick=()=>dialog('掃描並同步音樂庫',`<p>將登錄�
 $('#permissions').onclick=run(()=>openPermissions());
 function userDeletionReason(user){if(user.role==='admin'&&users.filter(u=>u.role==='admin').length<=1)return '不能刪除最後一位管理員';if(user.id===me.id)return '不能刪除目前登入的帳號';return ''; }
 async function refreshUsers(){users=await api('/users');$('#users').innerHTML=users.map(u=>`<tr><td>${escapeHTML(u.username)}</td><td><span class="badge">${u.role}</span></td><td>${u.role==='user'?`<button data-user-permissions="${u.id}">存取權限</button> `:''}<button data-edit-user="${u.id}">編輯</button> <button class="danger" data-delete-user="${u.id}" ${userDeletionReason(u)?`disabled title="${userDeletionReason(u)}"`:""}>刪除</button>${userDeletionReason(u)?` <small class="muted">${userDeletionReason(u)}</small>`:""}</td></tr>`).join('');}
-$('#nav-users').onclick=run(async()=>{$('#library-view').hidden=true;$('#users-view').hidden=false;await refreshUsers();});
+$('#nav-users').onclick=run(async()=>{showView('users');await refreshUsers();});
 function editUser(user){dialog(user?'編輯帳號':'新增帳號',textField('帳號','username',user?.username||'')+textField(user?'新密碼（留白保留原密碼）':'密碼（至少 8 字元）','password','','password',!user)+`<label>角色<select name="role"><option value="user">user · 聆聽者</option><option value="admin" ${user?.role==='admin'?'selected':''}>admin · 管理員</option></select></label>`+(user?'<p class="muted">儲存後，此帳號現有登入會失效。</p>':''),async data=>{const values=Object.fromEntries(data);if(user&&!values.password)delete values.password;await api(user?`/users/${user.id}`:'/users',user?'PATCH':'POST',values);if(user?.id===me.id){signOut();toast('帳號已更新，請重新登入');}else await refreshUsers();});}
 $('#add-user').onclick=()=>editUser(null);
 $('#users').onclick=run(async event=>{const permission=event.target.closest('[data-user-permissions]');if(permission){await openPermissions(Number(permission.dataset.userPermissions));return;}const edit=event.target.closest('[data-edit-user]'),del=event.target.closest('[data-delete-user]');if(edit)editUser(users.find(u=>u.id===Number(edit.dataset.editUser)));if(del){const u=users.find(u=>u.id===Number(del.dataset.deleteUser));if(userDeletionReason(u)){toast(userDeletionReason(u));return;}dialog('刪除帳號',`<p>確定永久刪除帳號「${escapeHTML(u.username)}」？其登入與授權也會移除。</p>`,async()=>{await api(`/users/${u.id}`,'DELETE');await refreshUsers();},'刪除帳號');}});
@@ -166,7 +172,7 @@ function loadAudio(autoplay){
   folderId=currentTrack.folder_id;
   // A previous search must not hide the newly playing song.
   $('#search').value='';
-  $('#users-view').hidden=true;$('#library-view').hidden=false;
+  showView('library');
  }
  mediaReady=false;audio.onloadedmetadata=null;updateNow();$('#mode').value=playback.mode;
  if(hlsEngine)hlsEngine.stop();hlsEntry=null;

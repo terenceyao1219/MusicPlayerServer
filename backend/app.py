@@ -659,4 +659,7 @@ def create_app(config_path=None, overrides=None):
     from .hls import install_hls
     install_hls(app, db, lock, fail, body, track, path, playback_state, BASE, database)
 
+    from .quick_test import install_quick_test
+    install_quick_test(app, db, lock, fail, body, BASE, database)
+
     return app

@@ -24,3 +24,15 @@ body.resizing-sidebar{cursor:col-resize;user-select:none}
 @media(max-width:700px){.player-options select{max-width:100%;font-size:11px}}
 
 #hls-status{flex-basis:100%;font-size:11px;color:var(--muted)}#hls-status:empty{display:none}
+
+/* Account settings. */
+.settings-card{padding:24px;margin:20px 0;border:1px solid var(--line,#d6ddd8);border-radius:16px;background:var(--surface,transparent)}
+.settings-card h2{margin-top:0}.settings-card p{line-height:1.7}.settings-card .check{display:flex;align-items:center;gap:10px}
+.settings-card .check input{width:auto}.settings-card input[readonly]{width:100%;margin-top:8px}
+
+/* Inline SVG icons inherit foreground colors in light and dark themes. */
+.ui-icon{display:inline-block;width:20px;height:20px;vertical-align:middle;flex-shrink:0;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.nav{display:flex;align-items:center;gap:10px}.brand{display:flex;align-items:center;gap:10px}.brand .ui-icon{width:26px;height:26px}
+.cover .ui-icon{width:28px;height:28px}#empty .ui-icon{width:48px;height:48px}.hero-art .ui-icon{width:80px;height:80px}
+#dialog-close{display:grid;place-items:center}.upload .ui-icon,#add-user .ui-icon{margin-right:5px}
+@media(max-width:700px){.nav{display:inline-flex}.cover .ui-icon{width:24px;height:24px}}

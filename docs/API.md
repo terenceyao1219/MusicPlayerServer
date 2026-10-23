@@ -2230,3 +2230,14 @@ curl "$API/tracks/2/stream" \
 ### 帳號與通行密鑰資料
 
 新增 passkeys 與 passkey_challenges 資料表，不刪除現有帳號或資料。修改帳號會清除未完成 challenge 與登入 session，但保留已綁定通行密鑰；不再需要的密鑰請在設定中移除。刪除帳號則連同密鑰及 challenge 一併刪除。公鑰與憑證 ID 保存在 DB，私鑰由裝置／密鑰管理器保管。
+
+## 快捷 HLS 測試（獨立於音樂庫）
+
+- GET /api/v1/mplayer/quick-test：Bearer 認證；讀取目前帳號的 {enabled, url}。預設 {enabled:false,url:null}。
+- PUT /api/v1/mplayer/quick-test：Bearer 認證；JSON {enabled:true|false}。啟用時準備共用音效並回傳相對 .m3u8 網址；重複啟用保留原網址，關閉再啟用則更換網址。無 FFmpeg 或轉碼失敗為 503，不會啟用。
+- GET /quick-test/{token}/：已移除播放頁面，回傳 404。
+- GET /quick-test/{token}/index.m3u8：持續更新的 live HLS 清單，四段視窗、每段約六秒。
+- GET /quick-test/{token}/tone/{sequence}.ts：共用 AAC/MPEG-TS 測試音效。
+
+每個清單與片段請求都驗證帳號仍存在且測試已啟用；無效連結回傳 404，回應禁止快取。
+管理端不接受指定其他帳號 ID；此 token 不能當一般 API Bearer Token。刪除帳號會一併移除測試設定。
