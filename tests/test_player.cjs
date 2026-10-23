@@ -80,23 +80,26 @@ test('display titles omit only the supported final extension without changing fi
  assert.match(a.run("$('#tracks').innerHTML"),/>MP3</);
 });
 
-test('playback transport selection survives reload independently of account state',async()=>{
- const storage=new Map(),a=player(storage);
- await a.run("$('#transport').onchange({target:{value:'hls'}})");
- assert.equal(storage.get('mplayer:transport:v1'),'hls');
- const b=player(storage);
- assert.equal(b.run('transport'),'hls');assert.equal(b.run("$('#transport').value"),'hls');
- assert.equal(b.run('playback.mode'),'folder');
- await b.run("$('#transport').onchange({target:{value:'direct'}})");
- assert.equal(storage.get('mplayer:transport:v1'),'direct');
- assert.equal(a.run('transport'),'hls');
+test('server configuration controls transport and ignores old browser preference',async()=>{
+ for(const enabled of [true,false]){
+  const a=player(new Map([['mplayer:transport:v1',enabled?'direct':'hls']]));
+  a.run(`api=async path=>path==='/me'?{id:1,username:'test',role:'admin'}:{hls_enabled:${enabled}};refresh=async()=>{};restoreLocal=async()=>{};`);
+  await a.run('enter()');assert.equal(a.run('transport'),enabled?'hls':'direct');
+ }
+});
+
+test('dragging progress survives timeupdate and one change seeks to the preview',async()=>{
+ const a=player();await a.run('choose(4)');a.audio.onloadedmetadata();
+ a.audio.currentTime=10;a.run("$('#seek').onpointerdown();$('#seek').value=80;$('#seek').oninput({target:{value:80}})");
+ a.audio.ontimeupdate();assert.equal(a.run("$('#seek').value"),80);
+ await a.run("$('#seek').onchange({target:{value:80}})");assert.equal(a.audio.currentTime,80);
+ a.audio.ontimeupdate();assert.equal(a.run("$('#seek').value"),80);
 });
 
 test('restoring state cannot overwrite the saved song before loading finishes',async()=>{
  const stored=JSON.stringify({schema_version:1,track_id:123,position:42,mode:'random'});
  const storage=new Map([['mplayer:playback:v1:1',stored]]),a=player(storage);
  a.run('restoring=true');await a.run('persist()');
- await a.run("$('#transport').onchange({target:{value:'hls'}})");
  assert.equal(storage.get('mplayer:playback:v1:1'),stored);
  assert.equal(a.run('transport'),'direct');
 });
@@ -109,4 +112,11 @@ test('a failed progress save does not pause media playback',async()=>{
  a.audio.ontimeupdate();
  await new Promise(resolve=>setImmediate(resolve));
  assert.equal(a.audio.paused,false);
+});
+
+
+test('releasing an unchanged slider does not leave progress frozen',()=>{
+ const a=player();a.audio.currentTime=12;
+ a.run("$('#seek').onpointerdown();$('#seek').onpointerup()");
+ a.audio.ontimeupdate();assert.equal(a.run("$('#seek').value"),12);
 });

@@ -125,3 +125,24 @@ test('MSE works without native HLS and native is a fallback without MSE',async()
  const fallback=engine({Hls:class {static isSupported(){return false;}}});
  await fallback.player.start({track_id:10,position:0});assert.equal(fallback.audio.src,fallback.player.session.playlist_url);
 });
+
+
+test('HLS seek keeps requested position until the range is ready, then completes once',async()=>{
+ const {audio,player}=engine();await player.start({track_id:10,position:0});
+ audio.ready();audio.emit('seeked');await Promise.resolve();
+ audio.seekable.end=()=>5;
+ const pending=player.seek(15);assert.equal(audio.currentTime,0);
+ assert.equal(player.current().position,15);
+ audio.emit('progress');assert.equal(audio.currentTime,0);
+ audio.seekable.end=()=>70;audio.emit('progress');assert.equal(audio.currentTime,15);
+ audio.emit('seeked');await pending;assert.equal(player.seekTarget,null);
+});
+
+test('repeated seeks keep the newest target and stop cancels pending listeners',async()=>{
+ const {audio,player}=engine();await player.start({track_id:10,position:0});
+ audio.ready();audio.emit('seeked');await Promise.resolve();
+ audio.seekable.end=()=>5;
+ const first=player.seek(15),second=player.seek(18);await first;
+ assert.equal(player.current().position,18);player.stop();await second;
+ audio.seekable.end=()=>70;audio.emit('progress');assert.equal(audio.currentTime,0);
+});

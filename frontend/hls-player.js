@@ -15,14 +15,14 @@ class SonoraHLS {
   return ios||safari||!(window.Hls&&Hls.isSupported());
  }
  stop(){
-  this.generation++;if(this.cancelStart){this.cancelStart();this.cancelStart=null;}clearTimeout(this.timer);this.timer=null;this.loading=false;
+  this.generation++;if(this.cancelSeek)this.cancelSeek();if(this.cancelStart){this.cancelStart();this.cancelStart=null;}clearTimeout(this.timer);this.timer=null;this.loading=false;
   if(this.player){this.player.destroy();this.player=null;}
   const previous=this.session;this.session=null;
   if(previous)this.request('/hls/sessions/'+previous.id,'DELETE').catch(()=>{});
  }
  async start(state){
   this.stop();const generation=this.generation;
-  if(!SonoraHLS.supported(this.audio))throw Error('此瀏覽器不支援 HLS，請切回原始串流。');
+  if(!SonoraHLS.supported(this.audio))throw Error('此瀏覽器無法播放，請使用新版 Safari、Chrome 或 Edge。');
   this.loading=true;this.warned=false;this.started=false;this.pollWarned=false;
   try{
    let session=await this.request('/hls/sessions','POST',state);
@@ -44,7 +44,7 @@ class SonoraHLS {
    if(SonoraHLS.useNative(audio)){audio.src=session.playlist_url;audio.load();}
    else{
     this.player=new Hls({enableWorker:false,startPosition:session.position,maxBufferLength:30});
-    this.player.on(Hls.Events.ERROR,(_event,data)=>{if(data.fatal){if(this.cancelStart){this.cancelStart();this.cancelStart=null;}this.loading=false;this.report('HLS 播放中斷，請按播放重試或切回原始串流。');this.failed=true;}});
+    this.player.on(Hls.Events.ERROR,(_event,data)=>{if(data.fatal){if(this.cancelStart){this.cancelStart();this.cancelStart=null;}this.loading=false;this.report('播放中斷，請按播放重試。');this.failed=true;}});
     this.player.loadSource(session.playlist_url);this.player.attachMedia(audio);
    }
    this.failed=false;this.poll(generation);
@@ -58,7 +58,7 @@ class SonoraHLS {
   const events=['loadeddata','canplay','progress','durationchange','seeked','playing'];
   const cleanup=()=>{clearTimeout(timer);for(const event of events)audio.removeEventListener(event,check);};
   const finish=()=>{if(finished)return;finished=true;cleanup();this.cancelStart=null;this.loading=false;this.started=true;this.update(this.current());};
-  const fail=()=>{finished=true;cleanup();this.cancelStart=null;audio.pause();this.loading=false;this.failed=true;this.report('HLS 尚未能定位到所選歌曲，請按播放重試或切回原始串流。');};
+  const fail=()=>{finished=true;cleanup();this.cancelStart=null;audio.pause();this.loading=false;this.failed=true;this.report('暫時無法播放所選歌曲，請按播放重試。');};
   const inRange=()=>{
    for(let i=0;i<audio.seekable.length;i++)if(audio.seekable.start(i)<=target+.05&&audio.seekable.end(i)>target)return true;
    return false;
@@ -82,7 +82,7 @@ class SonoraHLS {
     else check();
    }).catch(()=>{
     playPending=false;if(finished||generation!==this.generation)return;
-    finish();this.report('HLS 已定位，請按播放按鈕開始聆聽。');
+    finish();this.report('歌曲已準備好，請按播放按鈕開始聆聽。');
    });
   };
   const retry=()=>{
@@ -97,14 +97,45 @@ class SonoraHLS {
  }
  current(allowFailed=false){
   if(!this.session||this.loading||(this.failed&&!(allowFailed&&this.started)))return null;
-  const time=this.audio.currentTime;
+  const time=this.seekTarget??this.audio.currentTime;
   const entry=this.session.entries.find(e=>time>=e.start-.001&&time<e.start+e.duration-.001);
   if(!entry)return null;
   return {entry,track_id:entry.track_id,position:Math.max(0,time-entry.start),duration:entry.duration};
  }
- seek(position){const current=this.current();if(current)this.audio.currentTime=current.entry.start+Math.max(0,Math.min(position,current.duration-.05));}
+ seek(position){
+  const current=this.current();if(!current||!Number.isFinite(position))return Promise.resolve();
+  if(this.cancelSeek)this.cancelSeek();
+  const target=current.entry.start+Math.max(0,Math.min(position,current.duration-.05));
+  this.seekTarget=target;
+  return new Promise((resolve,reject)=>{
+   const audio=this.audio;let timer=null,done=false,attempts=0;
+   const events=['seeked','canplay','progress','durationchange'];
+   const finish=error=>{
+    if(done)return;done=true;clearTimeout(timer);
+    for(const event of events)audio.removeEventListener(event,check);
+    this.cancelSeek=null;this.seekTarget=null;
+    if(error)reject(error);else resolve();
+   };
+   const check=()=>{
+    if(done)return;
+    if(!audio.seeking&&Math.abs(audio.currentTime-target)<.35){finish();return;}
+    if(audio.seeking)return;
+    for(let i=0;i<audio.seekable.length;i++){
+     if(audio.seekable.start(i)<=target&&audio.seekable.end(i)>target){
+      try{audio.currentTime=target;}catch{}
+      return;
+     }
+    }
+   };
+   const retry=()=>{if(done)return;if(++attempts>100){finish(Error('暫時無法跳到選定位置，請稍後重試。'));return;}check();if(!done)timer=setTimeout(retry,200);};
+   this.cancelSeek=()=>finish();
+   for(const event of events)audio.addEventListener(event,check);
+   check();if(!done)timer=setTimeout(retry,200);
+  });
+ }
  step(direction){
   const current=this.current();if(!current)return false;
+  if(this.cancelSeek)this.cancelSeek();
   const next=this.session.entries.find(e=>e.index===current.entry.index+direction);
   if(!next)return false;
   this.audio.currentTime=next.start;this.update(this.current());this.audio.play().catch(()=>this.report('請按播放按鈕繼續聆聽。'));return true;
@@ -127,7 +158,7 @@ class SonoraHLS {
    try{await this.refresh();this.pollWarned=false;}catch(error){
     // Metadata polling is separate from native media playback. A temporary
     // network failure must not permanently stop polling or position tracking.
-    if(generation===this.generation&&!this.pollWarned){this.pollWarned=true;this.report('HLS 狀態暫時無法更新，將自動重試。');}
+    if(generation===this.generation&&!this.pollWarned){this.pollWarned=true;this.report('播放狀態暫時無法更新，將自動重試。');}
    }
    if(generation===this.generation)this.poll(generation);
   },4000);

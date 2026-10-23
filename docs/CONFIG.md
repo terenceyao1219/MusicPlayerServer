@@ -76,3 +76,11 @@ upload:
 ```
 
 完整範例見 [config.yaml](../config.yaml)，版本演進見 [更新紀錄](../CHANGELOG.md)。
+
+
+### 自動掃描與播放方式
+`hls.enabled: true` 時播放介面直接使用 HLS；`false` 時直接播放原始串流，不再顯示播放方式選單。啟用 HLS 時仍須安裝 FFmpeg。
+
+管理員可在「進階設定 → 音樂庫同步」手動同步，或開啟自動掃描（預設關閉，設定存於 SQLite）。自動掃描限定 Linux，明確使用 watchdog 的 InotifyObserver，不採用檔案系統輪詢；啟用及伺服器重啟時會先同步一次，之後合併檔案關閉寫入、移動、刪除與新增資料夾事件後同步。新資料夾不會自動授權一般使用者。
+
+音樂目錄必須能提供本機 Linux inotify 事件；NFS/SMB 遠端主機上的異動可能不會傳送事件，此時請使用手動同步。部署仍須維持單一 Gunicorn worker（現有預設）。

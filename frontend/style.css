@@ -36,3 +36,34 @@ body.resizing-sidebar{cursor:col-resize;user-select:none}
 .cover .ui-icon{width:28px;height:28px}#empty .ui-icon{width:48px;height:48px}.hero-art .ui-icon{width:80px;height:80px}
 #dialog-close{display:grid;place-items:center}.upload .ui-icon,#add-user .ui-icon{margin-right:5px}
 @media(max-width:700px){.nav{display:inline-flex}.cover .ui-icon{width:24px;height:24px}}
+
+
+/* Keep folder labels and counts on one row, including the mobile scroll strip. */
+.folder-link{display:flex;align-items:center;gap:12px;min-width:0}
+.folder-link span{float:none}
+.folder-link .folder-link-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:inherit}
+.folder-link .folder-link-count{flex:none;white-space:nowrap;font-variant-numeric:tabular-nums}
+.folder-name span,.hero>div{min-width:0}
+#library-title{overflow-wrap:anywhere}
+
+@media(max-width:700px){
+  /* iOS form focus must not enlarge the viewport; pinch zoom stays available. */
+  input,select,textarea,.player-options select{font-size:16px}
+  #sidebar,main,#app{min-width:0;max-width:100%}
+  #sidebar .brand{padding-right:70px;font-size:clamp(18px,6vw,24px);letter-spacing:2px}
+  #folder-nav{width:100%;min-width:0;gap:8px;overscroll-behavior-x:contain}
+  #folder-nav .folder-link{flex:0 0 auto;min-width:0;width:clamp(140px,48vw,210px);max-width:100%;min-height:44px}
+  header{gap:8px;flex-wrap:wrap}header .badge{white-space:nowrap}
+  .breadcrumbs{flex-wrap:wrap}.breadcrumbs button{flex:none}
+  #breadcrumb-current{min-width:0;max-width:100%}
+  .search-wrap,.timeline,.timeline input,.transport{min-width:0}
+  #batch{flex-wrap:wrap}
+  .settings-card{padding:18px}.settings-card p{overflow-wrap:anywhere}
+  #player{height:calc(160px + env(safe-area-inset-bottom,0px));padding-bottom:calc(12px + env(safe-area-inset-bottom,0px));column-gap:8px}
+  .now{flex:1;min-width:0;width:auto}.now small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .player-options{flex:0 0 116px;width:116px;min-width:0}.player-options select{width:100%}
+  .transport{flex:0 0 100%;gap:12px}.controls{flex:none}.timeline{gap:6px}.timeline span{flex:none}
+  main{padding-bottom:calc(200px + env(safe-area-inset-bottom,0px))}
+  #toast{bottom:calc(175px + env(safe-area-inset-bottom,0px))}
+  body.user #track-list-wrap .selection-cell,body.user #track-list-wrap .actions-cell{display:none}
+}

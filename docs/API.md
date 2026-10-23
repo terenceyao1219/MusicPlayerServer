@@ -2241,3 +2241,10 @@ curl "$API/tracks/2/stream" \
 
 每個清單與片段請求都驗證帳號仍存在且測試已啟用；無效連結回傳 404，回應禁止快取。
 管理端不接受指定其他帳號 ID；此 token 不能當一般 API Bearer Token。刪除帳號會一併移除測試設定。
+
+
+### 播放與音樂庫設定
+- `GET /api/v1/mplayer/playback/config`：登入後取得 `hls_enabled`，播放介面依此選用播放方式。
+- `GET /api/v1/mplayer/library/settings`（admin）：回傳 `auto_scan`、`supported`、`running`、`error`。
+- `PUT /api/v1/mplayer/library/settings`（admin）：傳入 `{"auto_scan": true}` 或 `false`。設定儲存在 SQLite，重啟後保留。無法啟動 inotify 時回傳 503，不會改用輪詢。
+- `PATCH /api/v1/mplayer/tracks/<id>`：可傳 `{"title": "歌曲名稱"}`，後端自動保留原副檔名；既有完整檔名 `name` 參數仍相容。

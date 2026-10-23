@@ -364,6 +364,9 @@ def create_app(config_path=None, overrides=None):
     @app.post(PREFIX + "/library/sync")
     def sync_library():
         admin()
+        return reconcile_library()
+
+    def reconcile_library():
         summary = {"folders_added": 0, "folders_removed": 0,
                    "tracks_added": 0, "tracks_removed": 0, "skipped_count": 0, "skipped": []}
 
@@ -486,9 +489,10 @@ def create_app(config_path=None, overrides=None):
     @app.patch(PREFIX + "/tracks/<int:ident>")
     def rename_track(ident):
         admin()
-        value = name(body().get("name"))
+        data = body()
         with lock:
             row = one("tracks", ident)
+            value = name(name(data["title"]) + Path(row["name"]).suffix) if "title" in data else name(data.get("name"))
             if Path(value).suffix.lower() != Path(row["name"]).suffix.lower():
                 fail("改名不能變更音樂格式副檔名")
             old, new = path(row["folder_id"], row["name"]), path(row["folder_id"], value)
@@ -661,5 +665,12 @@ def create_app(config_path=None, overrides=None):
 
     from .quick_test import install_quick_test
     install_quick_test(app, db, lock, fail, body, BASE, database)
+
+    @app.get(PREFIX + "/playback/config")
+    def playback_config():
+        return {"hls_enabled": bool(config.get("hls", {}).get("enabled", True))}
+
+    from .library_watch import install_library_watch
+    install_library_watch(app, db, lock, admin, body, fail, music, reconcile_library)
 
     return app

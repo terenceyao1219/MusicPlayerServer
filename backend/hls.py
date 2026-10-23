@@ -95,7 +95,7 @@ def install_hls(app, db, lock, fail, body, track, path, playback_state, base, da
                 duration = float(line.split(':', 1)[1].split(',')[0])
             elif line and not line.startswith('#') and duration is not None:
                 if '/' in line or '\\' in line or not line.endswith('.ts') or not (destination / line).is_file():
-                    raise ValueError('HLS 快取不完整。')
+                    raise ValueError('歌曲資料尚未完整，請重新播放。')
                 segments.append({'file': line, 'duration': duration})
                 duration = None
         if not segments:
@@ -157,7 +157,7 @@ def install_hls(app, db, lock, fail, body, track, path, playback_state, base, da
         except Exception:
             app.logger.exception('HLS preparation failed')
             with guard:
-                session['error'] = 'HLS 準備失敗，請確認歌曲可解碼、FFmpeg 與磁碟空間；可切回原始串流。'
+                session['error'] = '歌曲準備失敗，請稍後重試，或聯絡管理員檢查檔案與伺服器。'
         finally:
             with guard:
                 session['building'] = False
@@ -174,7 +174,7 @@ def install_hls(app, db, lock, fail, body, track, path, playback_state, base, da
         cleanup()
         session = sessions.get(sid)
         if not session or session['user_id'] != g.user['id']:
-            fail('HLS 工作階段不存在或已過期，請重新播放', 404)
+            fail('播放連線已過期，請重新播放', 404)
         session['touched'] = time.time()
         return session
 
@@ -191,12 +191,12 @@ def install_hls(app, db, lock, fail, body, track, path, playback_state, base, da
 
     @bp.get('/hls/status')
     def status():
-        return {'enabled': bool(enabled and ffmpeg), 'reason': None if enabled and ffmpeg else 'HLS 未啟用或找不到 FFmpeg'}
+        return {'enabled': bool(enabled and ffmpeg), 'reason': None if enabled and ffmpeg else '播放服務尚未就緒，請聯絡管理員'}
 
     @bp.post('/hls/sessions')
     def create():
         if not enabled or not ffmpeg:
-            fail('HLS 未啟用或找不到 FFmpeg', 503)
+            fail('播放服務尚未就緒，請聯絡管理員', 503)
         with lock:
             state, _ = playback_state(body())
             if not state['track_id']:
@@ -204,7 +204,7 @@ def install_hls(app, db, lock, fail, body, track, path, playback_state, base, da
         with guard:
             cleanup()
             if len(sessions) >= max_sessions:
-                fail('HLS 工作階段已達上限，請稍後再試', 503)
+                fail('目前播放人數較多，請稍後再試', 503)
             sid = secrets.token_urlsafe(24)
             session = dict(id=sid, user_id=g.user['id'], first=state['track_id'], position=state['position'],
                            mode=state['mode'], entries=[], duration=0., requested=0, requested_time=state['position'], touched=time.time(),
@@ -238,7 +238,7 @@ def install_hls(app, db, lock, fail, body, track, path, playback_state, base, da
         with guard:
             session = get_session(sid)
             if not session['entries']:
-                fail(session['error'] or 'HLS 正在準備，請稍後', 503)
+                fail(session['error'] or '正在準備歌曲，請稍候', 503)
             with lock:
                 for entry in session['entries']:
                     track(entry['track_id'])
@@ -281,10 +281,10 @@ def install_hls(app, db, lock, fail, body, track, path, playback_state, base, da
         with guard:
             session = get_session(sid)
             if entry_index >= len(session['entries']):
-                fail('找不到 HLS 片段', 404)
+                fail('找不到播放資料，請重新播放', 404)
             entry = session['entries'][entry_index]
             if segment_index >= len(entry['segments']):
-                fail('找不到 HLS 片段', 404)
+                fail('找不到播放資料，請重新播放', 404)
             with lock:
                 track(entry['track_id'])
             session['requested'] = max(session['requested'], entry_index)

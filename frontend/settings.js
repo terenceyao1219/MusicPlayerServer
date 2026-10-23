@@ -1,6 +1,21 @@
 (() => {
  const enabled=$('#quick-test-enabled'),copy=$('#quick-test-copy'),status=$('#quick-test-status');
  let link=null,version=0;
+ const autoScan=$('#auto-scan'),scanStatus=$('#auto-scan-status');
+ function displayLibrary(state){
+  autoScan.checked=state.auto_scan;autoScan.disabled=!state.supported&&!state.auto_scan;
+  scanStatus.textContent=state.error||(!state.supported?'自動掃描需要 Linux 伺服器，可使用手動同步。':state.running?'已啟用，檔案變更後會自動同步。':'目前已關閉自動掃描。');
+ }
+ async function loadLibrarySettings(){
+  autoScan.disabled=true;scanStatus.textContent='正在讀取設定…';
+  try{displayLibrary(await api('/library/settings'));}
+  catch(error){scanStatus.textContent='設定讀取失敗，請重新開啟進階設定。';throw error;}
+ }
+ autoScan.onchange=run(async()=>{
+  const requested=autoScan.checked;autoScan.disabled=true;
+  try{displayLibrary(await api('/library/settings','PUT',{auto_scan:requested}));}
+  catch(error){autoScan.checked=!requested;autoScan.disabled=false;scanStatus.textContent='設定未成功儲存，請重試。';throw error;}
+ });
  function display(state){
   enabled.checked=state.enabled;link=state.url?new URL(state.url,location.origin).href:null;
   copy.disabled=!link;status.textContent=state.enabled?'已啟用，可以複製 .m3u8 測試連結。':'目前已關閉，請先啟用測試連結。';
@@ -8,6 +23,7 @@
  }
  $('#nav-settings').onclick=run(async()=>{
   showView('settings');const current=++version;
+  if(me.role==='admin')await loadLibrarySettings();
   enabled.disabled=copy.disabled=true;link=null;$('#quick-test-manual').hidden=true;$('#quick-test-url').value='';
   status.textContent='正在讀取設定…';
   try{const state=await api('/quick-test');if(current===version){display(state);enabled.disabled=false;}}

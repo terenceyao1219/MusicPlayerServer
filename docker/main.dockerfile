@@ -15,8 +15,9 @@ RUN curl -fSL --retry 3 https://ffmpeg.org/releases/ffmpeg-8.1.3.tar.xz -o ffmpe
 
 FROM base AS python-builder
 COPY requirements.txt /build/requirements.txt
+# watchdog has no musllinux wheel; build only this package from source on Alpine.
 RUN python -m venv --without-pip /opt/venv \
-    && python -m pip --python /opt/venv/bin/python install --no-cache-dir --only-binary=:all: -r /build/requirements.txt
+    && python -m pip --python /opt/venv/bin/python install --no-cache-dir --only-binary=:all: --no-binary=watchdog -r /build/requirements.txt
 
 FROM base AS runtime
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PATH="/opt/venv/bin:$PATH"
