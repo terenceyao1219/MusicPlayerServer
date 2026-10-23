@@ -1,3 +1,4 @@
+# Parameter reference (required fields, defaults, versions): docs/CONFIG.md
 server:
   host: 0.0.0.0
   port: 8000

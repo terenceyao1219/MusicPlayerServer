@@ -23,6 +23,8 @@ bash docker/compose.sh down
 
 ## 設定與保存資料
 
+完整參數、必填條件、未指定時的預設值與適用版本見 [config.yaml 設定參考](../docs/CONFIG.md)。
+
 - `config.yaml` 決定容器內監聽 port、TLS、資料位置與上傳限制。若改為 9000，port mapping 也要改為 `9000:9000`。
 - named volume 保存 SQLite 與實際音樂。不要使用 `down -v`，除非確定要刪除全部資料。
 - 容器以 UID 10001 執行。若改用 bind mount，請先讓該 UID 有資料目錄讀寫權限。

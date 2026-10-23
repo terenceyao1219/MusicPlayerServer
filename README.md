@@ -22,7 +22,8 @@ python run.py
 - [更新紀錄](CHANGELOG.md)
 - [完整 WebAPI 文件](docs/API.md)
 - [Docker 建置、部署與備份](docker/ReadMe.md)
-- [YAML 設定](config.yaml)
+- [YAML 設定參數表：用途、必填、預設值與適用版本](docs/CONFIG.md)
+- [YAML 設定範例](config.yaml)
 
 ## 使用流程
 
