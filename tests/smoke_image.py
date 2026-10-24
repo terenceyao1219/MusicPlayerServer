@@ -56,6 +56,32 @@ try:
         (results / (source.name + '.ts')).write_bytes(response.data)
         client.delete(prefix + '/hls/sessions/' + sid, headers=headers)
         print('PASS direct + HLS:', source.name, flush=True)
+        assert client.put(prefix + '/normalization', headers=headers,
+                          json={'enabled': True, 'target': -16, 'peak': -2}).status_code == 200
+        response = client.post(prefix + '/hls/sessions', headers=headers,
+                               json={'track_id': ident, 'mode': 'single'})
+        assert response.status_code == 202, response.json
+        sid = response.json['id']
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            state = client.get(prefix + '/hls/sessions/' + sid, headers=headers).json
+            assert not state['error'], (source.name, state)
+            if state['ready']:
+                break
+            time.sleep(.05)
+        else:
+            raise AssertionError('Normalized HLS timed out: ' + source.name)
+        assert next(t for t in client.get(prefix + '/tracks', headers=headers).json if t['id'] == ident)['analyzed']
+        playlist = client.get(state['playlist_url'])
+        segment = next(line for line in playlist.text.splitlines() if line and not line.startswith('#'))
+        response = client.get(state['playlist_url'].rsplit('/', 1)[0] + '/' + segment)
+        assert response.status_code == 200
+        (results / ('normalized-' + source.name + '.ts')).write_bytes(response.data)
+        client.delete(prefix + '/hls/sessions/' + sid, headers=headers)
+        client.put(prefix + '/normalization', headers=headers,
+                   json={'enabled': False, 'target': -16, 'peak': -2})
+        print('PASS analysis + normalized HLS:', source.name, flush=True)
+
 finally:
     app.extensions['hls']['sessions'].clear()
     app.extensions['hls']['executor'].shutdown(wait=True)

@@ -2281,3 +2281,20 @@ connected 表示有效工作階段，不表示確認裝置正在發聲。回應 
 缺少或錯誤 Basic：401 + WWW-Authenticate；停用／片段無權：403；未知電台／無可播歌曲：404；
 工作階段被取代、過期或需因來源變更重連：410；首播先等待最多 8 秒並準備至少三個目標片段時長，仍未完成：503 + Retry-After: 2。
 帳號刪除會級聯刪除電台及共用認證資料。新連線取代原工作階段，但已下載音訊無法追回。
+
+## 音量正規化
+
+所有端點使用既有 Bearer 登入驗證。
+
+| 方法／路徑（前綴 /api/v1/mplayer） | 用途 |
+| --- | --- |
+| GET /normalization | 目前帳號設定，預設 {"enabled":false,"target":-16,"peak":-2} |
+| PUT /normalization | 完整更新 enabled（boolean）、target（-20/-18/-16/-14）、peak（-3/-2/-1）；非法值回 400，啟用時無 HLS/FFmpeg 回 503 |
+| GET /normalization/library | 管理者查詢背景狀態 |
+| PUT /normalization/library | 管理者更新 {"auto_analyze":true/false}，開啟會補分析 |
+| POST /normalization/library | 管理者啟動全庫補分析；執行中不重複啟動 |
+| DELETE /normalization/library | 管理者停止後續排程，目前工作完成後停止 |
+
+背景狀態包含 auto_analyze、running、stopping、total、completed、failed、current。completed 包含已有有效分析的歌曲；current 為目前檔名或 null。一般使用者呼叫 library 端點回 403。
+GET /tracks 每首增加 analyzed 布林值，表示來源的目前版本是否有有效分析資料。來源替換會使此值回 false。
+帳號設定在 HLS／電台工作階段建立時快照，更新不會改變已發布片段。

@@ -23,6 +23,7 @@
  }
  $('#nav-settings').onclick=run(async()=>{
   showView('settings');const current=++version;
+  if(window.loadNormalizationSettings)await window.loadNormalizationSettings();
   if(me.role==='admin')await loadLibrarySettings();
   enabled.disabled=copy.disabled=true;link=null;$('#quick-test-manual').hidden=true;$('#quick-test-url').value='';
   status.textContent='正在讀取設定…';

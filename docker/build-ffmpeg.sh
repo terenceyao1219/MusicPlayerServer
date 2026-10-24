@@ -13,10 +13,10 @@ set -eu
     --enable-demuxer=mp3,mov,wav,ogg \
     --enable-decoder=mp3,mp3float,aac,aac_fixed,alac,vorbis,opus,flac,pcm_s8,pcm_u8,pcm_s16le,pcm_s16be,pcm_s24le,pcm_s24be,pcm_s32le,pcm_s32be,pcm_f32le,pcm_f32be,pcm_f64le,pcm_f64be,pcm_alaw,pcm_mulaw,adpcm_ima_wav,adpcm_ms \
     --enable-parser=mpegaudio,aac,aac_latm,vorbis,opus,flac \
-    --enable-encoder=aac \
-    --enable-muxer=hls,mpegts,adts \
+    --enable-encoder=aac,pcm_s16le \
+    --enable-muxer=hls,mpegts,adts,null \
     --enable-bsf=aac_adtstoasc \
-    --enable-filter=abuffer,abuffersink,aresample,aformat,anull,atrim,asetpts
+    --enable-filter=abuffer,abuffersink,aresample,aformat,anull,atrim,asetpts,loudnorm,volume
 make -j"${FFMPEG_BUILD_JOBS:-2}"
 make install
 mkdir -p /opt/ffmpeg/share/licenses/ffmpeg

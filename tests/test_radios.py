@@ -245,7 +245,7 @@ def test_shuffle_cold_retries_keep_first_song_and_prepare_next(radio,monkeypatch
     cache=app.extensions['radios']['cache']
     requested=[]
     original=cache.get
-    monkeypatch.setattr(cache,'get',lambda source:requested.append(source) or None)
+    monkeypatch.setattr(cache,'get',lambda source, preferences=None:requested.append(source) or None)
     row=create(c,a,ordering='shuffle')
     first=row['progress']['track_id']
     assert first in tracks
@@ -293,9 +293,9 @@ def test_initial_playlist_waits_for_encoder_without_503(radio,monkeypatch):
     cache=app.extensions['radios']['cache']
     original=cache.get
     calls=[0]
-    def delayed(source):
+    def delayed(source, preferences=None):
         calls[0]+=1
-        return None if calls[0]<3 else original(source)
+        return None if calls[0]<3 else original(source, preferences)
     monkeypatch.setattr(cache,'get',delayed)
     listener,media=open_stream(app,row)
     response=listener.get(media,headers=headers(row))

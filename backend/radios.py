@@ -20,11 +20,12 @@ REWIND_SECONDS = 12
 
 
 def install_radios(app, db, library_lock, fail, body, path, database):
+    normalization = app.extensions['normalization']
     guard, active = threading.RLock(), {}
     last_clean = [0.]
     settings = app.config['SETTINGS'].get('hls', {})
     cache = RadioAudio(database.parent / 'radio-cache', settings.get('ffmpeg', 'ffmpeg'),
-                       max(32, int(settings.get('cache_mb', 2048))) * 1024 * 1024)
+                       max(32, int(settings.get('cache_mb', 2048))) * 1024 * 1024, normalization)
     keyfile = database.parent / 'radio-secret.key'
     if not keyfile.exists():
         with app.app_context():
@@ -181,7 +182,7 @@ def install_radios(app, db, library_lock, fail, body, path, database):
                     db().commit()
             source = dict(sources)[progress['track_id']]
             try:
-                cache.get(source)
+                cache.get(source, normalization.preferences(row['user_id']))
             except ValueError:
                 pass
 
@@ -300,7 +301,7 @@ def install_radios(app, db, library_lock, fail, body, path, database):
             retire_idle()
             old = active.get(ident)
             cookie = request.cookies.get('sonora_radio_' + ident)
-            if old and cookie != old['id']:
+            if old and (cookie != old['id'] or old['normalization'] != normalization.preferences(row['user_id'])):
                 checkpoint(row, old)
                 old = None
             if not old or cookie != old['id']:
@@ -319,7 +320,7 @@ def install_radios(app, db, library_lock, fail, body, path, database):
                     db().commit()
                 old = dict(id=secrets.token_urlsafe(24), touch=time.monotonic(), origin=None, base=0,
                            requested=0, segments=[], state=state, duration=0., seq=0, disc=0,
-                           pending=None, last_track=None)
+                           pending=None, last_track=None, normalization=normalization.preferences(row['user_id']))
                 active[ident] = old
             response = Response('#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-STREAM-INF:BANDWIDTH=210000,CODECS="mp4a.40.2"\n'
                                 + f"{old['id']}/live.m3u8\n", mimetype='application/vnd.apple.mpegurl')
@@ -353,7 +354,7 @@ def install_radios(app, db, library_lock, fail, body, path, database):
                     state = plan(row, state, ids)
                     session['state'] = state
                 try:
-                    asset = cache.get(sources[state['track_id']])
+                    asset = cache.get(sources[state['track_id']], session['normalization'])
                 except ValueError as error:
                     fail(str(error), 503)
                 if asset is None:
@@ -372,9 +373,9 @@ def install_radios(app, db, library_lock, fail, body, path, database):
                            'next_state': plan(row, state, ids)}
                 # Start preparing the next song while the current song is playing.
                 next_source = sources[pending['next_state']['track_id']]
-                pending['next_key'] = cache.key(next_source)
+                pending['next_key'] = cache.key(next_source, session['normalization'])
                 try:
-                    cache.get(next_source)
+                    cache.get(next_source, session['normalization'])
                 except ValueError:
                     pass
                 session['pending'] = pending
@@ -452,7 +453,7 @@ def install_radios(app, db, library_lock, fail, body, path, database):
             source = dict(available(row)).get(segment['track_id'])
             if source is None:
                 fail('此歌曲的權限已收回或檔案已移除。', 403)
-            if cache.key(source) != segment['key']:
+            if cache.key(source, session['normalization']) != segment['key']:
                 active.pop(ident, None)
                 fail('歌曲檔案已更新，請重新播放。', 410)
             if session['origin'] is None:

@@ -437,6 +437,7 @@ def create_app(config_path=None, overrides=None):
                     connection.execute("DELETE FROM folders WHERE id=?", (folder_id,))
                 summary["tracks_removed"] = len(removed_tracks)
                 summary["folders_removed"] = len(missing_folders)
+        app.extensions['normalization'].automatic()
         return summary
 
     @app.get(PREFIX + "/tracks")
@@ -448,7 +449,15 @@ def create_app(config_path=None, overrides=None):
             JOIN folders f ON f.id=t.folder_id WHERE (? IS NULL OR f.id=?) AND
             (?='admin' OR EXISTS(SELECT 1 FROM grants WHERE folder_id=f.id AND user_id=?))
             ORDER BY f.name,t.name,t.id""", (folder_id, folder_id, g.user["role"], g.user["id"]))
-        return jsonify([dict(r) for r in rows])
+        result = []
+        for row in rows.fetchall():
+            item = dict(row)
+            try:
+                item['analyzed'] = app.extensions['normalization'].ready(path(row['folder_id'], row['name']))
+            except (OSError, HTTPException):
+                item['analyzed'] = False
+            result.append(item)
+        return jsonify(result)
 
     @app.post(PREFIX + "/folders/<int:ident>/tracks")
     def upload(ident):
@@ -484,6 +493,7 @@ def create_app(config_path=None, overrides=None):
                 for target in saved:
                     target.unlink(missing_ok=True)
                 raise
+        app.extensions['normalization'].automatic()
         return jsonify(result), 201
 
     @app.patch(PREFIX + "/tracks/<int:ident>")
@@ -660,6 +670,9 @@ def create_app(config_path=None, overrides=None):
         db().execute("SELECT 1")
         return {"status": "ok"}
 
+    from .normalization import install_normalization
+    normalization = install_normalization(app, db, lock, path, admin, body, fail)
+
     from .hls import install_hls
     install_hls(app, db, lock, fail, body, track, path, playback_state, BASE, database)
 
@@ -668,7 +681,7 @@ def create_app(config_path=None, overrides=None):
 
     @app.get(PREFIX + "/playback/config")
     def playback_config():
-        return {"hls_enabled": bool(config.get("hls", {}).get("enabled", True))}
+        return {"hls_enabled": bool(config.get("hls", {}).get("enabled", True)) or normalization.preferences(g.user["id"])["enabled"]}
 
     from .library_watch import install_library_watch
     install_library_watch(app, db, lock, admin, body, fail, music, reconcile_library)
@@ -676,4 +689,7 @@ def create_app(config_path=None, overrides=None):
     from .radios import install_radios
     install_radios(app, db, lock, fail, body, path, database)
 
+    with app.app_context():
+        if db().execute('SELECT resume_batch OR auto_analyze FROM normalization_library WHERE id=1').fetchone()[0]:
+            normalization.start(automatic=True)
     return app

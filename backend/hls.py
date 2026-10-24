@@ -15,6 +15,7 @@ PREFIX = '/api/v1/mplayer'
 
 def install_hls(app, db, lock, fail, body, track, path, playback_state, base, database):
     bp = Blueprint('hls', __name__, url_prefix=PREFIX)
+    normalization = app.extensions['normalization']
     settings = app.config['SETTINGS'].get('hls', {})
     root = (base / settings.get('cache', str(database.parent / 'hls-cache'))).resolve()
     enabled = settings.get('enabled', True)
@@ -63,9 +64,9 @@ def install_hls(app, db, lock, fail, body, track, path, playback_state, base, da
             raise ValueError('音樂檔案不存在。')
         return row, source
 
-    def convert(source):
+    def convert(source, preferences):
         info = source.stat()
-        key = hashlib.sha256(f'aac-v1:{source}:{info.st_size}:{info.st_mtime_ns}'.encode()).hexdigest()
+        key = hashlib.sha256((f'aac-v1:{source}:{info.st_size}:{info.st_mtime_ns}' + normalization.suffix(preferences)).encode()).hexdigest()
         destination = root / key
         with guard:
             pinned.add(key)
@@ -82,8 +83,17 @@ def install_hls(app, db, lock, fail, body, track, path, playback_state, base, da
                            '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-ac', '2', '-threads', '1',
                            '-f', 'hls', '-hls_time', '6', '-hls_playlist_type', 'vod',
                            '-hls_segment_filename', str(temporary / 'seg%06d.ts'), str(temporary / 'index.m3u8')]
-                subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                               stderr=subprocess.PIPE, check=True, timeout=300)
+                with normalization.work.slot():
+                    current = source.stat()
+                    if (current.st_size, current.st_mtime_ns) != (info.st_size, info.st_mtime_ns):
+                        raise ValueError('歌曲排程期間已變更，請重試。')
+                    version = normalization.fingerprint(source)
+                    filters = normalization.filters(source, preferences)
+                    command[command.index('-c:a'):command.index('-c:a')] = filters
+                    subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                   stderr=subprocess.PIPE, check=True, timeout=300)
+                    if version != normalization.fingerprint(source):
+                        raise ValueError('歌曲轉碼期間已變更，請重試。')
                 temporary.rename(destination)
             finally:
                 if temporary.exists():
@@ -142,7 +152,7 @@ def install_hls(app, db, lock, fail, body, track, path, playback_state, base, da
                         ident = next_track(session)
                         row, source = permitted(session['user_id'], ident)
                         title = row['name']
-                    key, asset = convert(source)
+                    key, asset = convert(source, session['normalization'])
                     with guard:
                         if session['id'] not in sessions:
                             pinned.discard(key)
@@ -206,7 +216,7 @@ def install_hls(app, db, lock, fail, body, track, path, playback_state, base, da
             if len(sessions) >= max_sessions:
                 fail('目前播放人數較多，請稍後再試', 503)
             sid = secrets.token_urlsafe(24)
-            session = dict(id=sid, user_id=g.user['id'], first=state['track_id'], position=state['position'],
+            session = dict(id=sid, user_id=g.user['id'], normalization=normalization.preferences(g.user['id']), first=state['track_id'], position=state['position'],
                            mode=state['mode'], entries=[], duration=0., requested=0, requested_time=state['position'], touched=time.time(),
                            epoch=time.time(), publication_started=None, publication_base=0., published_time=0.,
                            building=False, error=None, finished=False)

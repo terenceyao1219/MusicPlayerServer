@@ -7,25 +7,29 @@ import subprocess
 import threading
 import time
 import zlib
+from contextlib import nullcontext
+from .normalization import DEFAULT, Normalization
 from concurrent.futures import ThreadPoolExecutor
 
 
 class RadioAudio:
-    def __init__(self, root, ffmpeg, limit):
+    def __init__(self, root, ffmpeg, limit, normalization=None):
+        self.normalization = normalization
         self.root, self.ffmpeg, self.limit = root, shutil.which(ffmpeg), limit
         self.pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix='radio-audio')
         self.jobs, self.errors = {}, {}
         self.lock = threading.RLock()
 
     @staticmethod
-    def key(source):
+    def key(source, preferences=None):
         info = source.stat()
-        return hashlib.sha256(f'radio-v1:{source}:{info.st_size}:{info.st_mtime_ns}'.encode()).hexdigest()
+        return hashlib.sha256((f'radio-v1:{source}:{info.st_size}:{info.st_mtime_ns}' + Normalization.suffix(preferences or DEFAULT)).encode()).hexdigest()
 
-    def get(self, source):
+    def get(self, source, preferences=None):
+        preferences = dict(preferences or DEFAULT)
         if not self.ffmpeg:
             raise ValueError('播放服務找不到 FFmpeg，請聯絡管理員。')
-        key = self.key(source)
+        key = self.key(source, preferences)
         with self.lock:
             target = self.root / key
             if (target / 'index.m3u8').is_file():
@@ -47,20 +51,32 @@ class RadioAudio:
             if key not in self.jobs:
                 if len(self.jobs) >= 32:
                     raise ValueError('歌曲準備工作較多，請稍後再試。')
-                self.jobs[key] = self.pool.submit(self.convert, key, source)
+                self.jobs[key] = self.pool.submit(self.convert, key, source, preferences)
             return None
 
-    def convert(self, key, source):
+    def convert(self, key, source, preferences=None):
+        context = self.normalization.app.app_context() if self.normalization else nullcontext()
+        slot = self.normalization.work.slot() if self.normalization else nullcontext()
+        with context, slot:
+            self._convert(key, source, preferences or DEFAULT)
+
+    def _convert(self, key, source, preferences):
         try:
             self.root.mkdir(parents=True, exist_ok=True)
             target = self.root / key
             target.mkdir(exist_ok=True)
+            if self.key(source, preferences) != key:
+                raise ValueError('歌曲排程期間已變更，請重試。')
+            version = Normalization.fingerprint(source)
+            filters = self.normalization.filters(source, preferences) if self.normalization else []
             subprocess.run([self.ffmpeg, '-nostdin', '-hide_banner', '-loglevel', 'error', '-y',
                             '-protocol_whitelist', 'file,pipe', '-i', str(source), '-map', '0:a:0', '-vn',
-                            '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-ac', '2', '-threads', '1',
+                            *filters, '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-ac', '2', '-threads', '1',
                             '-f', 'hls', '-hls_time', '6', '-hls_playlist_type', 'vod',
                             '-hls_segment_filename', str(target / 'seg%06d.ts'), str(target / 'building.m3u8')],
                            check=True, capture_output=True, timeout=300)
+            if version != Normalization.fingerprint(source):
+                raise ValueError('歌曲轉碼期間已變更，請重試。')
             (target / 'building.m3u8').replace(target / 'index.m3u8')
         except Exception:
             with self.lock:

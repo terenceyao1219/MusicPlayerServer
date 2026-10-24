@@ -6,10 +6,10 @@
 .library-table{table-layout:fixed}.library-table td{vertical-align:middle}.library-table th:first-child,.library-table td:first-child{width:auto}
 #folder-list-wrap th:first-child{width:65%}#folder-list-wrap th:nth-child(2){width:15%}
 .folder-name{display:flex;align-items:center;gap:12px;border:0;background:transparent;text-align:left;padding:4px 0;width:100%}.folder-name span{overflow-wrap:anywhere}.folder-name svg{width:25px;height:25px;flex:none;fill:#e8bc5b;stroke:#a87d28;stroke-width:1.5;stroke-linejoin:round}
-#track-list-wrap .selection-cell{width:42px}#track-list-wrap th:nth-child(2){width:42px}#track-list-wrap th:nth-child(4){width:20%}#track-list-wrap th:nth-child(5){width:70px}#track-list-wrap .actions-cell{width:70px}
+#track-list-wrap .selection-cell{width:42px}#track-list-wrap th:nth-child(2){width:84px}#track-list-wrap th:nth-child(4){width:20%}#track-list-wrap th:nth-child(5){width:70px}#track-list-wrap .actions-cell{width:70px}
 .track-name{overflow-wrap:anywhere;width:100%}.library-table tbody tr:hover{background:color-mix(in srgb,var(--green) 7%,transparent)}
 .controls button{display:grid;place-items:center;min-width:40px;min-height:40px}.controls svg{width:22px;height:22px;fill:currentColor;stroke:currentColor;stroke-width:2;stroke-linejoin:round}.controls .pause-shape{display:none;fill:none;stroke-width:4}.controls .is-playing .play-shape{display:none}.controls .is-playing .pause-shape{display:block}
-@media(max-width:700px){#library-view .hero{min-height:90px;padding:16px}#library-view h1{font-size:26px}.breadcrumbs{gap:8px}#track-list-wrap th:nth-child(4),#track-list-wrap td:nth-child(4){display:none}#track-list-wrap .selection-cell{width:28px}#track-list-wrap th:nth-child(2){width:30px}#track-list-wrap th:nth-child(5){width:54px}#track-list-wrap .actions-cell{width:55px}#folder-list-wrap th:first-child{width:60%}#folder-list-wrap th:nth-child(2){width:18%}.controls{gap:8px}.controls button{min-width:36px;min-height:36px}}
+@media(max-width:700px){#library-view .hero{min-height:90px;padding:16px}#library-view h1{font-size:26px}.breadcrumbs{gap:8px}#track-list-wrap th:nth-child(4),#track-list-wrap td:nth-child(4){display:none}#track-list-wrap .selection-cell{width:28px}#track-list-wrap th:nth-child(2){width:76px}#track-list-wrap th:nth-child(5){width:54px}#track-list-wrap .actions-cell{width:55px}#folder-list-wrap th:first-child{width:60%}#folder-list-wrap th:nth-child(2){width:18%}.controls{gap:8px}.controls button{min-width:36px;min-height:36px}}
 
 :root{--sidebar-width:240px}
 #sidebar-resizer{position:fixed;left:calc(var(--sidebar-width) - 4px);top:0;bottom:112px;width:8px;z-index:8;cursor:col-resize;touch-action:none}
@@ -79,5 +79,8 @@ body.resizing-sidebar{cursor:col-resize;user-select:none}
 #radio-folders{border:1px solid var(--line);border-radius:10px;max-height:220px;overflow:auto;padding:12px}#radios-view summary{cursor:pointer;font-weight:600}
 @media(max-width:700px){.radio-card{padding:16px}.radio-heading img{width:64px;height:64px}#radios-view .section-heading{flex-wrap:wrap}.radio-heading h2{font-size:21px}}
 
-#nav-radios{white-space:nowrap;font-size:13px;padding-inline:8px;gap:8px}
+#nav-radios{white-space:nowrap}
 .radio-card .radio-field .radio-value input[readonly]{margin:6px 0}
+
+/* Dim until the current source has a persistent loudness measurement. */
+.track-number{white-space:nowrap;font-variant-numeric:tabular-nums}.analysis-icon{display:inline-flex;vertical-align:middle;margin-left:.55rem;color:var(--muted,#66716d);opacity:.35}.analysis-icon.analyzed{color:#2ca67a;opacity:1;filter:drop-shadow(0 0 3px #2ca67a55)}.analysis-icon .ui-icon{width:18px;height:18px}.normalization-options{display:flex;gap:1rem;flex-wrap:wrap;margin-top:1rem}.normalization-options label{display:grid;gap:.4rem}
