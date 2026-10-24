@@ -673,4 +673,7 @@ def create_app(config_path=None, overrides=None):
     from .library_watch import install_library_watch
     install_library_watch(app, db, lock, admin, body, fail, music, reconcile_library)
 
+    from .radios import install_radios
+    install_radios(app, db, lock, fail, body, path, database)
+
     return app

@@ -26,11 +26,11 @@ async function api(path,method='GET',data){
 }
 function toast(message){$('#toast').textContent=message;$('#toast').hidden=false;clearTimeout(toast.timer);toast.timer=setTimeout(()=>$('#toast').hidden=true,4500);}
 function run(fn){return async event=>{try{await fn(event);}catch(error){toast(error.message);}};}
-function signOut(){if(hlsEngine)hlsEngine.stop();mediaReady=false;audio.pause();audio.removeAttribute('src');audio.load();token=null;sessionStorage.removeItem('mplayer-token');$('#app').hidden=true;$('#login-screen').hidden=false;$('#dialog').close();}
+function signOut(){window.dispatchEvent?.(new Event('sonora-signout'));if(hlsEngine)hlsEngine.stop();mediaReady=false;audio.pause();audio.removeAttribute('src');audio.load();token=null;sessionStorage.removeItem('mplayer-token');$('#app').hidden=true;$('#login-screen').hidden=false;$('#dialog').close();}
 async function enter(){restoring=true;$('#mode').disabled=true;try{me=await api('/me');transport=(await api('/playback/config')).hls_enabled?'hls':'direct';rememberUsername(me.username);document.body.classList.toggle('user',me.role==='user');$('#identity').textContent=me.username;$('#role-badge').textContent=me.role==='admin'?'ADMIN · 管理員':'MEMBER · 聆聽者';$('#login-screen').hidden=true;$('#app').hidden=false;folderId=null;selected.clear();$('#search').value='';showView('library');await refresh();await restoreLocal();}finally{restoring=false;$('#mode').disabled=false;}}
 async function refresh(){[folders,tracks]=await Promise.all([api('/folders'),api('/tracks')]);if(folderId&&!folders.some(f=>f.id===folderId))folderId=null;selected.clear();render();}
 function showView(name){
- for(const view of ['library','users','settings']){
+ for(const view of ['library','radios','users','settings']){
   $('#'+view+'-view').hidden=view!==name;
   $('#nav-'+view).classList.toggle('active',view===name);
  }

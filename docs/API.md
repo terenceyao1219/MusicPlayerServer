@@ -2248,3 +2248,36 @@ curl "$API/tracks/2/stream" \
 - `GET /api/v1/mplayer/library/settings`（admin）：回傳 `auto_scan`、`supported`、`running`、`error`。
 - `PUT /api/v1/mplayer/library/settings`（admin）：傳入 `{"auto_scan": true}` 或 `false`。設定儲存在 SQLite，重啟後保留。無法啟動 inotify 時回傳 503，不會改用輪詢。
 - `PATCH /api/v1/mplayer/tracks/<id>`：可傳 `{"title": "歌曲名稱"}`，後端自動保留原副檔名；既有完整檔名 `name` 參數仍相容。
+
+## 個人續播電台（1.6.1）
+
+管理端點皆需 Bearer 登入，只能管理自己的電台：
+- GET /api/v1/mplayer/radios：列出自己的電台。
+- POST /api/v1/mplayer/radios：建立，201。
+- PUT /api/v1/mplayer/radios/{id}：完整更新並結束原連線。
+- DELETE /api/v1/mplayer/radios/{id}：刪除。
+- POST /api/v1/mplayer/radios/{id}/toggle：{enabled:boolean}，不要求仍有原資料夾權限。
+- POST /api/v1/mplayer/radios/{id}/reset：重設該台進度、洗牌佇列並結束連線。
+- POST /api/v1/mplayer/radios/{id}/disconnect：結束該台連線。
+- POST /api/v1/mplayer/radios/{id}/credentials：重設整個帳號共用播放密碼，結束此帳號所有電台連線。
+
+建立／完整更新欄位：
+name（1–80 字元）、scope（all/folders）、folder_ids（正整數陣列）、
+ordering（sequential/shuffle）、enabled 與 resume（boolean）、background 與 foreground（#RRGGBB）。
+folders 模式至少一個資料夾且必須仍有權限。沒有可選的連線政策，永遠新連線取代舊連線；舊 policy 參數不影響行為。
+
+回應提供 id、name、scope、folder_ids、ordering、enabled、resume、background、foreground、
+stream_url、username、password、icon_url、progress、connected。同帳號每台回傳相同 username/password，
+但不同帳號無法使用彼此的播放帳密。URL 為同源相對路徑。progress 保存 track_id、offset、remaining、seen。
+connected 表示有效工作階段，不表示確認裝置正在發聲。回應 no-store。
+
+媒體端點：
+- GET /radio/{id}/index.m3u8：Basic 驗證後建立／沿用播放工作階段，回傳 master playlist。
+- HEAD 同路徑：只檢查帳密及啟用狀態，不建立工作階段。
+- GET /radio/{id}/{session}/live.m3u8：Basic、站點開關、活動工作階段及資料夾權限驗證。
+- GET /radio/{id}/{session}/{sequence}.ts：再驗證歌曲權限、檔案版本及活動工作階段。
+- GET /radio/{id}/icon.png：公開 PNG，只有抽象配色圖案。
+
+缺少或錯誤 Basic：401 + WWW-Authenticate；停用／片段無權：403；未知電台／無可播歌曲：404；
+工作階段被取代、過期或需因來源變更重連：410；首播先等待最多 8 秒並準備至少三個目標片段時長，仍未完成：503 + Retry-After: 2。
+帳號刪除會級聯刪除電台及共用認證資料。新連線取代原工作階段，但已下載音訊無法追回。

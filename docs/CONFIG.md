@@ -84,3 +84,10 @@ upload:
 管理員可在「進階設定 → 音樂庫同步」手動同步，或開啟自動掃描（預設關閉，設定存於 SQLite）。自動掃描限定 Linux，明確使用 watchdog 的 InotifyObserver，不採用檔案系統輪詢；啟用及伺服器重啟時會先同步一次，之後合併檔案關閉寫入、移動、刪除與新增資料夾事件後同步。新資料夾不會自動授權一般使用者。
 
 音樂目錄必須能提供本機 Linux inotify 事件；NFS/SMB 遠端主機上的異動可能不會傳送事件，此時請使用手動同步。部署仍須維持單一 Gunicorn worker（現有預設）。
+
+### 個人續播電台（1.6.1）
+
+使用 hls.ffmpeg 與 hls.cache_mb（電台獨立快取目標），不受網頁 hls.enabled 開關控制。
+固定每帳號最多 20 台、全服務 32 個工作階段、45 秒無媒體請求釋放、12 秒保守續播回退。
+同帳號所有電台共用一組播放帳密；新連線固定取代舊連線，沒有連線政策設定。
+SQLite 及其旁的 radio-secret.key 必須一起備份；radio-cache 可重建。維持單一 worker，反向代理保留 Authorization header。
