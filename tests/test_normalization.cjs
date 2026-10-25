@@ -39,18 +39,41 @@ test('administrator analysis controls use restricted endpoints',async()=>{
  assert.ok(s.calls.some(c=>c.url==='/normalization/library'&&c.method==='POST'));
  assert.ok(s.calls.some(c=>c.url==='/normalization/library'&&c.method==='DELETE'));
 });
-test('analysis icon refresh switches dim and lit states with accessible descriptions',async()=>{
- const s=setup('user'),states=[];
- const icon={dataset:{analysis:'1'},classList:{toggle:(name,on)=>states.push([name,on])},setAttribute:(name,value)=>states.push([name,value])};
- s.context.document.querySelectorAll=()=>[icon];
- s.context.api=async()=>[{id:1,analyzed:true}];
- s.context.tracks.push({id:1});
+test('library polling only refreshes when revision changes and skips hidden views',async()=>{
+ const s=setup('user');let revision='10',refreshes=0;
+ s.context.libraryRevision='10';
+ s.context.api=async url=>{s.calls.push({url});return {revision};};
+ s.context.refresh=async background=>{assert.equal(background,true);refreshes++;s.context.libraryRevision=revision;};
  await s.timers[0]();
+ assert.equal(refreshes,0);
+ assert.equal(s.calls.at(-1).url,'/library/revision');
+ revision='11';await s.timers.at(-1)();assert.equal(refreshes,1);
+ await s.timers.at(-1)();assert.equal(refreshes,1);
+ const count=s.calls.length;s.context.document.hidden=true;
+ await s.timers.at(-1)();assert.equal(s.calls.length,count);
+ s.context.document.hidden=false;s.$('#library-view').hidden=true;
+ await s.timers.at(-1)();assert.equal(s.calls.length,count);
+});
+test('failed refresh retries without accepting revision; logout ignores in-flight result',async()=>{
+ const s=setup();s.context.libraryRevision='1';let refreshes=0;
+ s.context.api=async()=>({revision:'2'});
+ s.context.refresh=async()=>{refreshes++;throw Error('offline');};
+ await s.timers[0]();await s.timers.at(-1)();assert.equal(refreshes,2);
+ s.context.api=async()=>{s.context.token=null;return {revision:'2'};};
+ await s.timers.at(-1)();assert.equal(refreshes,2);
+});
+test('background refresh preserves selection, refreshes rows and rejects stale responses',async()=>{
+ const s=setup();Object.assign(s.context,{libraryRefreshGeneration:0,libraryRevision:null,folderId:1,
+  selected:new Set([1,2]),render:()=>{},folders:[]});
+ const source=fs.readFileSync(path.join(__dirname,'../frontend/app.js'),'utf8');
+ vm.runInContext(source.slice(source.indexOf('async function refresh('),source.indexOf('function showView(')),s.context);
+ s.context.api=async url=>url==='/library/revision'?{revision:'3'}:url==='/folders'?[{id:1}]:[{id:1,analyzed:true}];
+ await s.context.refresh(true);
+ assert.equal(s.context.libraryRevision,'3');assert.deepEqual([...s.context.selected],[1]);
  assert.equal(s.context.tracks[0].analyzed,true);
- assert.equal(icon.title,'音量分析完成');
- assert.ok(states.some(([name,on])=>name==='analyzed'&&on===true));
- s.context.api=async()=>[{id:1,analyzed:false}];
- await s.timers.at(-1)();
- assert.equal(icon.title,'尚未分析音量');
- assert.ok(states.some(([name,on])=>name==='analyzed'&&on===false));
+ await s.context.refresh();assert.equal(s.context.selected.size,0);
+ let resolve;s.context.api=()=>new Promise(r=>resolve=r);
+ const pending=s.context.refresh(true);s.context.libraryRefreshGeneration++;
+ s.context.api=async()=>[];resolve({revision:'4'});await pending;
+ assert.equal(s.context.libraryRevision,'3');
 });

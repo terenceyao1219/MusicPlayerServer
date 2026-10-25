@@ -118,6 +118,7 @@ class Normalization:
         with self.lock:
             self.db().execute('INSERT OR REPLACE INTO audio_analysis VALUES(?,?,?)', (fingerprint, loudness, peak))
             self.db().commit()
+            self.app.extensions['library_changed']()
         return {'loudness': loudness, 'peak': peak}
 
     def filters(self, source, preferences):

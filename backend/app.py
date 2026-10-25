@@ -35,6 +35,13 @@ def create_app(config_path=None, overrides=None):
     database.parent.mkdir(parents=True, exist_ok=True)
     music.mkdir(parents=True, exist_ok=True)
     lock = threading.RLock()
+    revision = secrets.token_hex(16)
+
+    def library_changed():
+        nonlocal revision
+        revision = secrets.token_hex(16)
+
+    app.extensions['library_changed'] = library_changed
 
     def db():
         if "db" not in g:
@@ -155,6 +162,10 @@ def create_app(config_path=None, overrides=None):
 
     @app.after_request
     def headers(response):
+        if request.method in {'POST', 'PUT', 'PATCH', 'DELETE'} and 200 <= response.status_code < 300 and request.endpoint in {
+                'create_folder', 'change_folder', 'upload', 'rename_track', 'move_tracks',
+                'delete_tracks', 'permissions', 'user_permissions', 'change_user'}:
+            library_changed()
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["Content-Security-Policy"] = "default-src 'self'; style-src 'self'; script-src 'self'; media-src 'self' blob:; worker-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'"
@@ -437,8 +448,14 @@ def create_app(config_path=None, overrides=None):
                     connection.execute("DELETE FROM folders WHERE id=?", (folder_id,))
                 summary["tracks_removed"] = len(removed_tracks)
                 summary["folders_removed"] = len(missing_folders)
+        # Same-path external replacements can invalidate analysis too.
+        library_changed()
         app.extensions['normalization'].automatic()
         return summary
+
+    @app.get(PREFIX + "/library/revision")
+    def library_revision():
+        return {"revision": revision}
 
     @app.get(PREFIX + "/tracks")
     def tracks():
@@ -449,11 +466,15 @@ def create_app(config_path=None, overrides=None):
             JOIN folders f ON f.id=t.folder_id WHERE (? IS NULL OR f.id=?) AND
             (?='admin' OR EXISTS(SELECT 1 FROM grants WHERE folder_id=f.id AND user_id=?))
             ORDER BY f.name,t.name,t.id""", (folder_id, folder_id, g.user["role"], g.user["id"]))
+        measurements = {r[0] for r in db().execute("SELECT fingerprint FROM audio_analysis")}
         result = []
         for row in rows.fetchall():
             item = dict(row)
             try:
-                item['analyzed'] = app.extensions['normalization'].ready(path(row['folder_id'], row['name']))
+                source = music / row['folder_name'] / row['name']
+                if source.is_symlink() or not source.resolve().is_relative_to(music):
+                    fail("Invalid music path", 400)
+                item['analyzed'] = app.extensions['normalization'].fingerprint(source) in measurements
             except (OSError, HTTPException):
                 item['analyzed'] = False
             result.append(item)

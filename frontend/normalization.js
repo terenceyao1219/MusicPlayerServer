@@ -43,9 +43,11 @@
  stop.onclick=run(async()=>{stop.disabled=true;displayLibrary(await api('/normalization/library','DELETE'));});
  async function refreshIcons(){
   if(token&&me&&!$('#app').hidden&&!document.hidden&&!$('#library-view').hidden){
-   try{const rows=await api('/tracks'+(typeof folderId==='number'?'?folder_id='+folderId:''));if(token){const states=new Map(rows.map(t=>[t.id,t.analyzed]));for(const track of tracks)if(states.has(track.id))track.analyzed=!!states.get(track.id);
-    for(const icon of document.querySelectorAll('[data-analysis]')){const ready=!!states.get(Number(icon.dataset.analysis));icon.classList.toggle('analyzed',ready);icon.title=ready?'音量分析完成':'尚未分析音量';icon.setAttribute('aria-label',icon.title);}
-   }}catch{}
+   const session=token;
+   try{
+    const {revision}=await api('/library/revision');
+    if(session===token&&revision!==libraryRevision)await refresh(true);
+   }catch{}
   }
   refreshTimer=setTimeout(refreshIcons,5000);
  }

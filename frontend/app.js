@@ -1,6 +1,7 @@
 const $ = s => document.querySelector(s);
 const API = '/api/v1/mplayer';
 let token = sessionStorage.getItem('mplayer-token'), me, folders=[], tracks=[], users=[], folderId=null, selected=new Set(), playback={schema_version:1,track_id:null,position:0,mode:'folder'}, dialogAction, saveAt=0, switching=false, mediaReady=false;
+let libraryRevision=null,libraryRefreshGeneration=0;
 const audio=$('#audio');
 let transport='direct',hlsEntry=null,restoring=false;
 let scrubbing=false,seekPending=false;
@@ -26,9 +27,20 @@ async function api(path,method='GET',data){
 }
 function toast(message){$('#toast').textContent=message;$('#toast').hidden=false;clearTimeout(toast.timer);toast.timer=setTimeout(()=>$('#toast').hidden=true,4500);}
 function run(fn){return async event=>{try{await fn(event);}catch(error){toast(error.message);}};}
-function signOut(){window.dispatchEvent?.(new Event('sonora-signout'));if(hlsEngine)hlsEngine.stop();mediaReady=false;audio.pause();audio.removeAttribute('src');audio.load();token=null;sessionStorage.removeItem('mplayer-token');$('#app').hidden=true;$('#login-screen').hidden=false;$('#dialog').close();}
+function signOut(){libraryRevision=null;libraryRefreshGeneration++;window.dispatchEvent?.(new Event('sonora-signout'));if(hlsEngine)hlsEngine.stop();mediaReady=false;audio.pause();audio.removeAttribute('src');audio.load();token=null;sessionStorage.removeItem('mplayer-token');$('#app').hidden=true;$('#login-screen').hidden=false;$('#dialog').close();}
 async function enter(){restoring=true;$('#mode').disabled=true;try{me=await api('/me');transport=(await api('/playback/config')).hls_enabled?'hls':'direct';rememberUsername(me.username);document.body.classList.toggle('user',me.role==='user');$('#identity').textContent=me.username;$('#role-badge').textContent=me.role==='admin'?'ADMIN · 管理員':'MEMBER · 聆聽者';$('#login-screen').hidden=true;$('#app').hidden=false;folderId=null;selected.clear();$('#search').value='';showView('library');await refresh();await restoreLocal();}finally{restoring=false;$('#mode').disabled=false;}}
-async function refresh(){[folders,tracks]=await Promise.all([api('/folders'),api('/tracks')]);if(folderId&&!folders.some(f=>f.id===folderId))folderId=null;selected.clear();render();}
+async function refresh(background=false){
+ const generation=++libraryRefreshGeneration,session=token;
+ // Read before fetching: changes during the fetch remain visible next poll.
+ const {revision}=await api('/library/revision');
+ const [nextFolders,nextTracks]=await Promise.all([api('/folders'),api('/tracks')]);
+ if(generation!==libraryRefreshGeneration||session!==token)return;
+ folders=nextFolders;tracks=nextTracks;libraryRevision=revision;
+ if(folderId&&!folders.some(f=>f.id===folderId))folderId=null;
+ if(background){const ids=new Set(tracks.map(t=>t.id));for(const id of selected)if(!ids.has(id))selected.delete(id);}
+ else selected.clear();
+ render();
+}
 function showView(name){
  for(const view of ['library','radios','users','settings']){
   $('#'+view+'-view').hidden=view!==name;

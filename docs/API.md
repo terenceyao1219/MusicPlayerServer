@@ -2298,3 +2298,11 @@ connected 表示有效工作階段，不表示確認裝置正在發聲。回應 
 背景狀態包含 auto_analyze、running、stopping、total、completed、failed、current。completed 包含已有有效分析的歌曲；current 為目前檔名或 null。一般使用者呼叫 library 端點回 403。
 GET /tracks 每首增加 analyzed 布林值，表示來源的目前版本是否有有效分析資料。來源替換會使此值回 false。
 帳號設定在 HLS／電台工作階段建立時快照，更新不會改變已發布片段。
+
+
+### 音樂庫版本（1.7.1）
+
+`GET /api/v1/mplayer/library/revision`：需登入，回傳 `{"revision":"123"}`。
+版本為不透明字串，前端只比較是否相同。歌曲、資料夾、權限、分析結果變更或音樂庫同步會更新版本。
+前端在音樂庫畫面且分頁可見時，每 5 秒檢查一次；版本有變才重新載入資料夾與歌曲。
+版本存於單一 worker 的程序記憶體，重啟產生新版本；版本檢查不查 DB（登入驗證除外），也不掃描檔案；外部檔案變更仍須啟用自動掃描或執行手動同步。

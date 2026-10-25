@@ -82,3 +82,92 @@ def test_read_events_do_not_schedule_scans(tmp_path):
         assert not watcher.pending
     watcher.changed(SimpleNamespace(event_type='closed', is_directory=False))
     assert watcher.pending
+
+
+def test_library_revision_mutations_analysis_and_rollback(setup, monkeypatch):
+    import sqlite3
+    app, client, headers, root = setup
+    def revision():
+        response = client.get(P + '/library/revision', headers=headers)
+        assert response.status_code == 200
+        return response.json['revision']
+    assert client.get(P + '/library/revision').status_code == 401
+    before = revision()
+    assert revision() == before
+    folder_id = folder(client, headers)
+    assert revision() != before
+    before = revision()
+    ident = upload(client, headers, folder_id)
+    assert revision() != before
+    before = revision()
+    assert client.patch(P + f'/tracks/{ident}', headers=headers, json={'title': 'renamed'}).status_code == 200
+    assert revision() != before
+    service = app.extensions['normalization']
+    fingerprint = service.fingerprint(root / 'music/Jazz/renamed.wav')
+    before = revision()
+    monkeypatch.setattr('backend.normalization.subprocess.run', lambda *a, **kw: SimpleNamespace(stderr=b'{"input_i":"-18","input_tp":"-2"}'))
+    service.ffmpeg = 'ffmpeg'
+    with app.app_context():
+        service.analyze(root / 'music/Jazz/renamed.wav')
+    assert revision() != before
+    assert client.get(P + '/tracks', headers=headers).json[0]['analyzed'] is True
+    before = revision()
+    with sqlite3.connect(root / 'db.sqlite3') as connection:
+        connection.execute("UPDATE tracks SET name='rollback.wav'")
+        connection.rollback()
+    assert revision() == before
+    # A same-name external overwrite is still noticed when synchronization runs.
+    (root / 'music/Jazz/renamed.wav').write_bytes(b'changed')
+    assert client.post(P + '/library/sync', headers=headers).status_code == 200
+    assert revision() != before
+    assert client.get(P + '/tracks', headers=headers).json[0]['analyzed'] is False
+    destination = folder(client, headers, 'Other')
+    before = revision()
+    assert client.post(P + '/tracks/move', headers=headers, json={'track_ids': [ident], 'folder_id': destination}).status_code == 200
+    assert revision() != before
+    before = revision()
+    assert client.post(P + '/tracks/delete', headers=headers, json={'track_ids': [ident]}).status_code == 200
+    assert revision() != before
+
+
+def test_tracks_uses_constant_number_of_queries(setup, monkeypatch):
+    import sqlite3
+    app, client, headers, root = setup
+    folder_id = folder(client, headers)
+    for index in range(6):
+        upload(client, headers, folder_id, f'{index}.wav')
+    statements = []
+    connect = sqlite3.connect
+    def traced(*args, **kwargs):
+        connection = connect(*args, **kwargs)
+        connection.set_trace_callback(statements.append)
+        return connection
+    monkeypatch.setattr(sqlite3, 'connect', traced)
+    assert len(client.get(P + '/tracks', headers=headers).json) == 6
+    selects = [s for s in statements if s.lstrip().upper().startswith('SELECT')]
+    assert len(selects) == 3  # Authentication, joined tracks, all measurements.
+
+    statements.clear()
+    assert client.get(P + '/library/revision', headers=headers).status_code == 200
+    selects = [s for s in statements if s.lstrip().upper().startswith('SELECT')]
+    assert len(selects) == 1  # Only authentication; revision lives in memory.
+
+
+def test_revision_permissions_failures_and_restart(setup):
+    from test_api import user
+    app, client, headers, root = setup
+    folder_id = folder(client, headers)
+    user_id, listener, auth = user(app, client, headers)
+    def revision(c=client, h=headers):
+        return c.get(P + '/library/revision', headers=h).json['revision']
+    before = revision()
+    assert client.patch(P + f'/folders/{folder_id}', headers=headers, json={'name': '../invalid'}).status_code == 400
+    assert revision() == before
+    assert client.put(P + f'/folders/{folder_id}/permissions', headers=headers, json={'user_ids': [user_id]}).status_code == 200
+    assert revision(listener, auth) != before
+    before = revision()
+    assert client.put(P + f'/users/{user_id}/permissions', headers=headers, json={'folder_ids': []}).status_code == 200
+    assert revision(listener, auth) != before
+    before = revision()
+    restarted = create_app(overrides={'storage': {'database': str(root / 'db.sqlite3'), 'music': str(root / 'music')}})
+    assert revision(restarted.test_client(), headers) != before
